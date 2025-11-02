@@ -1,8 +1,8 @@
-# Psyche 角色卡设计器
+# 角色卡设计器 / Character Card Designer
 
 <div align="center">
 
-**✨ 基于 BMad 创意写作系统的专业角色卡创作工具**
+**✨ 专业 AI 角色卡创作工具 | Professional AI Character Card Designer**
 
 [![Next.js](https://img.shields.io/badge/Next.js-15-black)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19-blue)](https://react.dev/)

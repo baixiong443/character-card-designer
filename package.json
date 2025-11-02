@@ -1,18 +1,18 @@
 {
-  "name": "psyche-card-designer",
+  "name": "character-card-designer",
   "version": "1.0.0",
-  "description": "Professional AI-powered character card designer with Psyche system integration. 8-stage workflow, worldbook support, and multi-format export (JSON/PNG/Markdown).",
+  "description": "角色卡设计器 - Professional AI-powered character card designer with 8-stage workflow, worldbook support, and multi-format export (JSON/PNG/Markdown).",
   "keywords": ["character-card", "ai", "psyche", "furry", "sillytavern", "worldbook", "roleplay", "nextjs", "pwa"],
   "author": "Psyche Card Designer Team",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/USERNAME/psyche-card-designer.git"
+    "url": "https://github.com/USERNAME/character-card-designer.git"
   },
   "bugs": {
-    "url": "https://github.com/USERNAME/psyche-card-designer/issues"
+    "url": "https://github.com/USERNAME/character-card-designer/issues"
   },
-  "homepage": "https://github.com/USERNAME/psyche-card-designer#readme",
+  "homepage": "https://github.com/USERNAME/character-card-designer#readme",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

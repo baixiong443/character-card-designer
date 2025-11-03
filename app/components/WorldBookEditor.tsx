@@ -1,17 +1,32 @@
 'use client';
 
 import { useState } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Sparkles, AlertCircle } from 'lucide-react';
+import { Plus, Trash2, Edit2, Save, X, Sparkles, AlertCircle, Check } from 'lucide-react';
 import { useWorldBookStore } from '@/stores/worldbookStore';
 import { WorldBookEntry } from '@/types/worldbook';
 import { useAIService } from '@/services/aiService';
 
-export default function WorldBookEditor() {
+interface Message {
+  role: string;
+  content: string;
+}
+
+interface WorldBookEditorProps {
+  stageResults?: string[];
+  currentStageMessages?: Message[];
+}
+
+export default function WorldBookEditor({ 
+  stageResults = [], 
+  currentStageMessages = [] 
+}: WorldBookEditorProps) {
   const { entries, addEntry, updateEntry, deleteEntry } = useWorldBookStore();
   const { generateResponse, loading } = useAIService();
   
   const [editingEntry, setEditingEntry] = useState<WorldBookEntry | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [previewEntries, setPreviewEntries] = useState<Partial<WorldBookEntry>[]>([]);
+  const [showPreview, setShowPreview] = useState(false);
 
   /**
    * 开始编辑条目
@@ -52,10 +67,27 @@ export default function WorldBookEditor() {
   const handleAIGenerate = async () => {
     setIsGenerating(true);
     try {
+      // 构建角色设定上下文
+      const contextInfo = stageResults.filter(r => r && r.trim()).length > 0
+        ? `\n## 当前角色设定\n\n${stageResults.map((result, idx) => 
+            result ? `### 阶段${idx + 1}\n${result}\n` : ''
+          ).join('\n')}\n`
+        : '';
+
+      // 构建阶段7的对话历史
+      const dialogueInfo = currentStageMessages.length > 0
+        ? `\n## 阶段7的讨论内容\n\n用户和AI在阶段7讨论了以下内容，请特别关注这些需求：\n\n${currentStageMessages
+            .map(msg => `**${msg.role === 'user' ? '用户' : 'AI'}**: ${msg.content}`)
+            .join('\n\n')}\n`
+        : '';
+
       // 构建 AI 提示词
       const prompt = `# 世界书生成任务
 
 你是专业的世界书（Lorebook）设计师。请分析当前角色的设定，生成 3-5 个高质量的世界书条目。
+${contextInfo}${dialogueInfo}
+⚠️ 重要：只生成上述设定中**明确提到**的内容（地点、人物、物品等），不要凭空捏造。
+${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出的需求！' : ''}
 
 ## 什么是世界书？
 世界书是 AI 角色扮演的**动态知识注入系统**：
@@ -114,11 +146,15 @@ export default function WorldBookEditor() {
    - BL/耽美角色 → 重点：足部细节、气味、亲密互动场所
 
 2. **确定条目**：
+   - ⭐ **必须：重要人物（1-3个）** - 特别关注阶段3（关系网络）！
+     * 主角（核心角色条目）
+     * 配角/NPC（暗恋对象、朋友、导师等，从阶段3提取）
    - 必须：主要地点（1个）
-   - 必须：重要NPC或对手（1-2个）
    - 可选：标志性物品（1个）
-   - 可选：Furry特征（如适用，1-2个）
+   - 可选：重要事件（1个，如"海边之夜"）
+   - 可选：Furry特征（如适用，1-2个，如信息素系统、肉垫细节）
    - 可选：游戏规则（如适用，1个）
+   - 可选：格式规范（通常不需要，依赖首条消息的正向循环）
 
 3. **质量标准**：
    ✅ 多个关键词（中英文、别名、简称）
@@ -135,14 +171,49 @@ export default function WorldBookEditor() {
 **严格按照以下格式**，每个条目之间用"---"分隔：
 
 【关键词】关键词1, 关键词2, 关键词3
+【类型】核心角色/外貌细节/背景故事/配角/地点/物品/规则
 【内容】
 详细描述...（50-150字）
 
 ---
 
-【关键词】关键词1, 关键词2
+**类型说明（自动设置 cooldown/sticky）：**
+- 核心角色：主角的核心信息 → cooldown: 12, sticky: 3
+- 外貌细节：身体/外貌描写 → cooldown: 25
+- 背景故事：过去经历/深层动机 → cooldown: 40
+- 配角：其他角色 → cooldown: 15
+- 地点：场景/环境 → cooldown: 20
+- 物品：道具/装备 → cooldown: 30
+- 规则：游戏机制/特殊规则 → cooldown: 10, sticky: 5
+- **格式规范**：回复格式、状态栏格式 → cooldown: 50, sticky: 1（主要依赖首条消息的正向循环，此条目仅作为长对话的"保险"）
+
+**注意**：类型仅用于自动设置参数，请务必标注。
+
+---
+
+示例：
+
+【关键词】艾莉娅, Elaria, 精灵法师
+【类型】核心角色
 【内容】
-详细描述...
+艾莉娅，外表20岁（实际120岁）的精灵女性。纤细修长，银色长发，碧绿眼睛。曾是精灵王国守护者，因王国覆灭而流浪。性格外表温柔冷静，内心坚韧执着。
+
+---
+
+【关键词】禁忌森林, 暗影林, Forbidden Forest
+【类型】地点
+【内容】
+精灵王国遗址所在的森林。常年笼罩在黑暗迷雾中，充满危险的魔法生物。森林中心有古老的精灵圣树遗迹。
+
+---
+
+【关键词】状态栏, 回复格式, status bar
+【类型】格式规范
+【内容】
+每次回复时请在开头添加状态栏：
+情绪：[当前情绪]
+身体状态：[身体反应，特别注意兽人特征如耳朵、尾巴、肉垫的反应]
+环境：[当前场景、天气、氛围]
 
 ---
 
@@ -150,18 +221,58 @@ export default function WorldBookEditor() {
 
 ## 开始生成
 
-请根据当前角色的设定，生成 3-5 个世界书条目：`;
+请根据当前角色的设定，生成 3-5 个世界书条目。
 
-      const systemPrompt = `你是专业的世界书（Lorebook）设计师。你深度理解：
-1. 世界书是动态知识注入系统，按关键词触发
-2. 条目内容要精炼（50-150字），信息密集
-3. 关键词要多样（中英文、别名、简称）
-4. 条目之间要相互关联，构成完整世界观
-5. Furry角色需要详细的身体细节（毛皮/尾巴/肉垫/信息素）
-6. RPG角色需要清晰的游戏机制
-7. 必须使用标准格式：【关键词】...【内容】...，条目间用"---"分隔
+⚠️ **关键提醒**：
+1. 特别关注**阶段3（关系网络）**，为配角/NPC创建条目！
+2. 直接输出标准格式，不要任何解释或寒暄！
+3. 立即开始：
 
-你生成的世界书将被 SillyTavern 等平台直接使用，因此质量至关重要。`;
+【关键词】...`;
+
+      const systemPrompt = `你是专业的世界书（Lorebook）生成器。
+
+**核心规则**：
+1. 直接输出标准格式的条目，不要解释、不要寒暄、不要使用markdown代码块
+2. 每个条目必须严格遵循格式：【关键词】...【类型】...【内容】...
+3. 多个条目之间用"---"分隔
+4. 内容精炼（50-150字）
+
+**【类型】必须从以下选项中选择（不要自创！）**：
+- 核心角色（主角）
+- 配角（其他角色/NPC）
+- 外貌细节（身体特征）
+- 背景故事（过去经历）
+- 地点（场景/环境）
+- 物品（道具/装备）
+- 规则（游戏机制）
+- 格式规范（回复格式，极少用）
+
+⚠️ 不要写"选择性激活"、"常驻"等激活方式！
+
+**输出格式（严格遵循）**：
+
+【关键词】关键词1, 关键词2, 关键词3
+【类型】核心角色
+【内容】
+详细描述内容...
+
+---
+
+【关键词】另一个关键词1, 关键词2
+【类型】地点
+【内容】
+另一个描述...
+
+**禁止**：
+❌ 不要写"好的，我们开始生成！"之类的寒暄
+❌ 不要使用\`\`\`代码块包裹
+❌ 不要解释每个条目的作用
+❌ 不要问"接下来要我..."
+❌ 【类型】不要写激活方式（"选择性激活"/"常驻"）
+
+**只输出纯净的条目内容！**`;
+
 
       const response = await generateResponse(
         [{ role: 'user', content: prompt }],
@@ -172,9 +283,9 @@ export default function WorldBookEditor() {
       const parsedEntries = parseAIGeneratedEntries(response);
       
       if (parsedEntries.length > 0) {
-        // 添加到世界书
-        parsedEntries.forEach(entry => addEntry(entry));
-        alert(`成功生成 ${parsedEntries.length} 个世界书条目！`);
+        // 显示预览，让用户选择
+        setPreviewEntries(parsedEntries);
+        setShowPreview(true);
       } else {
         alert('AI 生成失败，请手动添加条目。');
       }
@@ -187,30 +298,109 @@ export default function WorldBookEditor() {
   };
 
   /**
+   * 确认添加预览的条目
+   */
+  const handleConfirmPreview = (selectedIndices: number[]) => {
+    selectedIndices.forEach(idx => {
+      const entry = previewEntries[idx];
+      if (entry) {
+        addEntry(entry);
+      }
+    });
+    setShowPreview(false);
+    setPreviewEntries([]);
+    alert(`成功添加 ${selectedIndices.length} 个世界书条目！`);
+  };
+
+  /**
+   * 根据条目类型获取推荐参数
+   */
+  const getTypeParams = (type: string): { cooldown: number | null; sticky: number | null } => {
+    const typeMap: Record<string, { cooldown: number; sticky: number | null }> = {
+      '核心角色': { cooldown: 12, sticky: 3 },
+      '外貌细节': { cooldown: 25, sticky: null },
+      '背景故事': { cooldown: 40, sticky: null },
+      '配角': { cooldown: 15, sticky: null },
+      '地点': { cooldown: 20, sticky: null },
+      '物品': { cooldown: 30, sticky: null },
+      '规则': { cooldown: 10, sticky: 5 },
+      '格式规范': { cooldown: 50, sticky: 1 },
+    };
+    
+    return typeMap[type] || { cooldown: 20, sticky: null };
+  };
+
+  /**
    * 解析 AI 生成的条目
    */
   const parseAIGeneratedEntries = (text: string): Partial<WorldBookEntry>[] => {
     const entries: Partial<WorldBookEntry>[] = [];
     
+    // 清理文本：移除markdown代码块标记
+    let cleanedText = text.replace(/```[\s\S]*?```/g, (match) => {
+      // 提取代码块内容
+      return match.replace(/```\w*\n?/g, '').replace(/```/g, '');
+    });
+    
+    // 移除前导的解释性文本（如"好的，我们开始..."）
+    // 找到第一个【关键词】之前的内容并删除
+    const firstKeywordIndex = cleanedText.indexOf('【关键词】');
+    if (firstKeywordIndex > 0) {
+      cleanedText = cleanedText.substring(firstKeywordIndex);
+    }
+    
     // 按 "---" 分割
-    const blocks = text.split('---').map(b => b.trim()).filter(b => b);
+    const blocks = cleanedText.split('---').map(b => b.trim()).filter(b => b);
     
     for (const block of blocks) {
+      // 跳过没有【关键词】的块（纯解释性文本）
+      if (!block.includes('【关键词】')) continue;
+      
       // 提取关键词
-      const keysMatch = block.match(/【关键词】([^\n]+)/);
+      const keysMatch = block.match(/【关键词】([^\n【]+)/);
       const keys = keysMatch 
         ? keysMatch[1].split(/[,，]/).map(k => k.trim()).filter(k => k)
         : [];
       
-      // 提取内容
-      const contentMatch = block.match(/【内容】\s*([^【]+)/s);
-      const content = contentMatch ? contentMatch[1].trim() : '';
+      // 提取类型
+      const typeMatch = block.match(/【类型】([^\n【]+)/);
+      let entryType = typeMatch ? typeMatch[1].trim() : '';
+      
+      // 修正错误的类型名称
+      const typeMapping: Record<string, string> = {
+        '选择性激活': '核心角色',
+        '常驻激活': '规则',
+        '常驻': '规则',
+        '人物': '配角',
+        '角色': '配角',
+        '场景': '地点',
+        '环境': '地点',
+        '道具': '物品',
+        '机制': '规则',
+      };
+      if (typeMapping[entryType]) {
+        entryType = typeMapping[entryType];
+      }
+      
+      // 提取内容（只到下一个问号/感叹号/句号+换行，或文本结束）
+      const contentMatch = block.match(/【内容】\s*\n?([\s\S]*?)(?=\n\n[这接要]|$)/);
+      let content = contentMatch ? contentMatch[1].trim() : '';
+      
+      // 进一步清理：移除尾部的问句和解释
+      content = content.replace(/\n*这个条目[\s\S]*$/, '');
+      content = content.replace(/\n*接下来[\s\S]*$/, '');
+      content = content.replace(/\n*要我[\s\S]*$/, '');
       
       if (keys.length > 0 && content) {
+        // 根据类型设置 cooldown/sticky
+        const params = getTypeParams(entryType);
+        
         entries.push({
           keys,
           content,
-          comment: keys[0], // 用第一个关键词作为备注
+          comment: entryType || keys[0], // 用类型或第一个关键词作为备注
+          cooldown: params.cooldown,
+          sticky: params.sticky,
         });
       }
     }
@@ -424,6 +614,158 @@ export default function WorldBookEditor() {
           ))}
         </div>
       )}
+
+      {/* 预览确认对话框 */}
+      {showPreview && (
+        <PreviewDialog
+          entries={previewEntries}
+          onConfirm={handleConfirmPreview}
+          onCancel={() => {
+            setShowPreview(false);
+            setPreviewEntries([]);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * 预览对话框组件
+ */
+function PreviewDialog({
+  entries,
+  onConfirm,
+  onCancel,
+}: {
+  entries: Partial<WorldBookEntry>[];
+  onConfirm: (selectedIndices: number[]) => void;
+  onCancel: () => void;
+}) {
+  const [selected, setSelected] = useState<Set<number>>(
+    new Set(entries.map((_, idx) => idx)) // 默认全选
+  );
+
+  const toggleSelect = (idx: number) => {
+    const newSelected = new Set(selected);
+    if (newSelected.has(idx)) {
+      newSelected.delete(idx);
+    } else {
+      newSelected.add(idx);
+    }
+    setSelected(newSelected);
+  };
+
+  const handleConfirm = () => {
+    onConfirm(Array.from(selected));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+        {/* 标题栏 */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 dark:border-slate-700 bg-gradient-to-r from-indigo-500 to-purple-600">
+          <div>
+            <h2 className="text-xl font-bold text-white flex items-center">
+              <Sparkles className="w-5 h-5 mr-2" />
+              AI 生成结果预览
+            </h2>
+            <p className="text-sm text-indigo-100 mt-1">
+              请勾选要添加的条目（已默认全选）
+            </p>
+          </div>
+          <button
+            onClick={onCancel}
+            className="p-2 rounded-lg text-white/80 hover:bg-white/20 transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* 内容区域 */}
+        <div className="flex-1 overflow-y-auto p-6">
+          <div className="space-y-4">
+            {entries.map((entry, idx) => (
+              <div
+                key={idx}
+                className={`border-2 rounded-lg p-4 cursor-pointer transition-all ${
+                  selected.has(idx)
+                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600'
+                }`}
+                onClick={() => toggleSelect(idx)}
+              >
+                <div className="flex items-start space-x-3">
+                  <div className="flex-shrink-0 mt-0.5">
+                    <div
+                      className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-colors ${
+                        selected.has(idx)
+                          ? 'bg-indigo-600 border-indigo-600'
+                          : 'border-slate-300 dark:border-slate-600'
+                      }`}
+                    >
+                      {selected.has(idx) && <Check className="w-3 h-3 text-white" />}
+                    </div>
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex flex-wrap gap-1 mb-2">
+                      {entry.keys?.map((key, kidx) => (
+                        <span
+                          key={kidx}
+                          className="px-2 py-0.5 text-xs rounded bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300"
+                        >
+                          {key}
+                        </span>
+                      ))}
+                      {entry.comment && (
+                        <span className="px-2 py-0.5 text-xs rounded bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300">
+                          {entry.comment}
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap mb-2">
+                      {entry.content}
+                    </p>
+                    {(entry.cooldown || entry.sticky) && (
+                      <div className="text-xs text-slate-500 dark:text-slate-400 flex gap-2">
+                        {entry.cooldown && (
+                          <span>⏱️ 冷却: {entry.cooldown}轮</span>
+                        )}
+                        {entry.sticky && (
+                          <span>📌 粘性: {entry.sticky}轮</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 底部按钮 */}
+        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900">
+          <div className="text-sm text-slate-600 dark:text-slate-400">
+            已选择 {selected.size} / {entries.length} 个条目
+          </div>
+          <div className="flex space-x-3">
+            <button
+              onClick={onCancel}
+              className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
+            >
+              取消
+            </button>
+            <button
+              onClick={handleConfirm}
+              disabled={selected.size === 0}
+              className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <Check className="w-4 h-4" />
+              <span>添加选中的条目</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

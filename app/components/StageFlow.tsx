@@ -1,16 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { Sparkles, Send, Loader, Download, ChevronLeft, ChevronRight, CheckCircle, FileUp, FileJson } from 'lucide-react';
+import { Sparkles, Send, Loader, Download, ChevronLeft, ChevronRight, CheckCircle, FileUp, FileJson, RefreshCw, AlertCircle, X, Plus, Save, Trash2 } from 'lucide-react';
 import { useAIService } from '@/services/aiService';
 import ExportDialog from '@/components/ExportDialog';
 import ImportTextDialog from '@/components/ImportTextDialog';
 import ImportCardDialog from '@/components/ImportCardDialog';
 import WorldBookEditor from '@/components/WorldBookEditor';
+import ProjectSelector from '@/components/ProjectSelector';
+import { useProgressStore } from '@/stores/progressStore';
+import { useCharacterStore } from '@/stores/characterStore';
 
 const STAGES = [
   '基础身份',
   '深度背景',
+  '关系网络',
   '物理描写',
   '专项深化',
   '互动设计',
@@ -648,21 +652,75 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 const STAGE_PROMPTS = [
   `【阶段1：基础身份】
-你的任务是帮助用户确定角色的基础身份。请询问并确定：
-- 角色名称
+你的任务是帮助用户确定所有主要角色的基础身份。
+
+## 第一步：识别角色
+
+如果用户导入了文本，识别所有主要角色。如果没有导入，询问：
+- 这是单角色卡还是多角色场景？
+- 有哪些主要角色？
+
+## 第二步：确定扮演方式
+
+对每个角色询问：
+"【角色名】的扮演方式：
+A. 主要由AI扮演（用户观察/上帝视角）
+B. 主要由用户扮演（但用户也可以用旁白/上帝视角推动剧情）
+C. 灵活切换（用户可以扮演这个角色，也可以旁观）"
+
+⚠️ 注意：即使选择B，用户也不是100%限定为该角色，可以灵活使用旁白和上帝视角。
+
+## 第三步：确定每个角色的基础信息
+
+对每个主要角色，询问并确定：
+- 名称（正式名、昵称）
 - 物种/种族（人类、兽人、龙族等）
 - 核心性格特征（3-5个关键词）
 - 年龄和性别
-请保持简洁，只关注基础身份。`,
+- 外在印象（体型、气质）
+
+请为每个角色单独列出信息。`,
 
   `【阶段2：深度背景】
 基于用户确定的角色基础，现在深入探索角色背景。请询问并发展：
 - 出生地和成长环境
 - 重要的人生经历
 - 核心动机和目标
-- 与其他角色的关系`,
+- 行为原因和深层动机`,
 
-  `【阶段3：物理描写】
+  `【阶段3：关系网络】
+这个阶段用于多角色场景。如果只有单个角色可跳过。
+
+请帮助用户梳理角色关系网络：
+
+1. **列出所有重要角色**：
+   - 主角（AI扮演）
+   - 互动对象（用户扮演/重要NPC）
+   - 其他重要角色
+
+2. **为每个重要角色询问**：
+   - 这个角色是谁？（基本信息）
+   - 与主角什么关系？（朋友/敌人/暗恋对象等）
+   - 角色类型？（AI扮演/用户扮演/NPC）
+   - 已知的性格特征？
+   - 互动模式？（主角对TA的态度、TA对主角的态度）
+
+3. **使用场景**：
+   - 如果用户会扮演特定角色，AI主要扮演其他角色
+   - 如果用户使用上帝视角，AI可同时呈现多个角色
+   - 灵活适应用户的游玩方式
+
+**输出格式示例**：
+\`\`\`
+角色名：[角色名]
+类型：用户扮演角色 / AI扮演 / NPC
+关系：与主角的关系（朋友/敌人/暗恋对象等）
+已知特征：性格特征、外貌印象
+互动：主角对该角色的态度、该角色对主角的态度
+【标注】如果是用户扮演，注明"用户扮演，以上为参考特征"
+\`\`\``,
+
+  `【阶段4：物理描写】
 基于用户的角色设定，详细描述角色的外貌和身体特征。请包含：
 - 身高、体型、体格
 - 面部特征、发型、眼睛
@@ -670,19 +728,37 @@ const STAGE_PROMPTS = [
 - 如果是Furry：毛皮、耳朵尾巴等基础特征
 - 独特的身体标记`,
 
-  ``, // 阶段4由用户选择的专项类型决定
+  ``, // 阶段5由用户选择的专项类型决定
 
-  `【阶段5：互动设计】
-基于已创建的角色，设计角色的互动方式。请创作：
+  `【阶段6：互动设计】
+基于已创建的角色，设计角色的互动方式。
+
+## 首先，询问用户格式偏好
+
+**问题**：您希望角色的回复使用什么格式？
+
+A. **标准格式**：直接对话和动作描写
+   示例："我...我不是故意的！"他/她的表情显得有些紧张。
+   
+B. **状态栏格式**（推荐用于详细RP、身体特征丰富的角色）：
+   情绪：[角色当前情绪]
+   身体状态：[身体反应、特殊特征的状态]
+   环境：[场景、天气、氛围]
+   
+   然后是角色的对话和动作...
+   
+   ⚠️ 优势：AI会从首条消息学习这个格式，并通过正向循环自然延续，无需额外设置
+
+请用户选择后，再创作：
 - 首条消息（第一次见面的场景）
 - 对话风格（正式/随意、幽默/严肃）
 - 口头禅或特殊用词
 - 3-5个不同场景的对话示例`,
 
-  `【阶段6：世界整合与世界书创建】
+  `【阶段7：世界整合】
 
 # 你的任务
-帮助用户完善世界观，并引导创建世界书（Lorebook）条目。
+帮助用户完善角色的世界观，并引导他们思考需要创建哪些世界书（Lorebook）条目。
 
 ## 什么是世界书？
 世界书是AI角色扮演的**动态知识注入系统**：
@@ -690,99 +766,97 @@ const STAGE_PROMPTS = [
 - 不占用常驻token，只在需要时激活
 - SillyTavern等平台会自动识别和使用
 
-## 世界书条目结构
-每个条目包含：
-1. **触发关键词**（keys）- 对话提到时注入（如："羊村", "青青草原"）
-2. **条目内容**（content）- 要注入的背景信息（50-150字）
-3. **类型**：
-   - 常驻（constant: true）- 始终激活，用于核心规则/机制
-   - 选择性（selective: true）- 按关键词触发，用于地点/人物/物品
+## 你的工作流程
 
-## 你的具体工作流程
+### 第一步：分析前6个阶段的内容
 
-### 第一步：分析已有设定
-回顾阶段1-5的内容，识别：
-- ✓ 地点（locations）- 羊村、狼堡、森林
-- ✓ 人物（characters）- NPC、对手、朋友
-- ✓ 物品（objects）- 武器、道具、标志物
-- ✓ 事件（events）- 循环事件、重要历史
-- ✓ 规则（rules）- 游戏机制、魔法系统、战斗规则
-- ✓ 组织（factions）- 团体、势力、种族
-- ✓ 概念（concepts）- Furry特性（信息素、发情期）、特殊能力
+识别可以创建世界书条目的元素：
+
+**人物相关**：
+- ⭐ 特别关注阶段3（关系网络）！
+- 主角的详细信息（核心角色条目）
+- 配角/NPC（如暗恋对象、朋友、导师）
+- 互动对象的性格、外貌、关系
+
+**环境相关**：
+- 地点（孤儿院、学校、城市、特殊场所）
+- 组织/团体（学生会、帮派、家族）
+- 历史事件（重要的过去事件）
+
+**设定相关**：
+- 物品（标志性道具、武器、装备）
+- 规则/机制（战斗系统、魔法、RPG机制）
+- 特殊概念（如Furry设定：信息素、发情期、兽人特征）
 
 ### 第二步：与用户讨论
-询问：
-- "角色主要活动在哪些地点？"
-- "有哪些重要的NPC角色？"
-- "世界有什么特殊的规则或机制？"
-- "有哪些标志性的物品或事件？"
+
+询问用户：
+- "角色主要活动在哪些地点？需要详细介绍吗？"
+- "阶段3提到的配角（如XXX），需要为他们创建条目吗？"
+- "有哪些标志性的物品或重要事件？"
+- "如果是Furry角色：需要详细设定信息素、发情期、肉垫等细节吗？"
+- "如果是RPG角色：有战斗系统、技能列表需要记录吗？"
 
 ### 第三步：主动建议
-基于已有设定，建议创建的条目类型：
-- 如果是Furry角色 → 建议：种族特征、发情机制、信息素系统、肉垫/尾巴细节
-- 如果是RPG角色 → 建议：战斗系统、技能列表、装备系统、地图
-- 如果有对手角色 → 建议：为对手创建条目
-- 如果有特殊地点 → 建议：为地点创建条目
 
-### 第四步：解释世界书的价值
-向用户说明：
-"世界书让AI更聪明。当对话提到'羊村'时，AI会自动知道羊村的详细信息，而不需要你每次都解释。这样可以：
-- 节省token
-- 让对话更流畅
-- 支持复杂的世界观
-- 完全兼容SillyTavern"
+基于已有设定，建议创建的条目：
 
-## 条目生成标准
+**示例**（根据实际情况调整）：
+"根据你的设定，我建议创建以下世界书条目：
 
-### 类型A：常驻知识（用于核心规则）
-\`\`\`
-【关键词】--战斗, --battle, 战斗系统
-【类型】常驻激活
-【内容】
-回合制战斗。攻击判定：d20+攻击修正 vs AC。暴击：自然20，伤害翻倍。技能消耗MP。战斗结束：一方HP归0或逃跑。
-\`\`\`
+1. **核心角色：铁** - 主角的完整信息（外貌、性格、背景）
+2. **配角：白熊** - 暗恋对象的信息（从阶段3提取）
+3. **地点：阳光之家孤儿院** - 主要活动场所
+4. **事件：海边之夜** - 重要的过去事件
+5. **兽人特征：信息素系统** - Furry设定的规则
 
-### 类型B：选择性知识（用于地点/人物/物品）
-\`\`\`
-【关键词】羊村, 青青草原, Sheep Village
-【内容】
-羊村位于青青草原北岸，被铁栅栏保护。村内有大肥羊学校、实验室、医务室。慢羊羊是村长。村子经常遭灰太狼袭击，但总被喜羊羊化解。
-\`\`\`
+你可以在下方点击"✨ AI生成世界书"按钮，让专用AI根据前6个阶段的内容自动生成这些条目。
+生成后你可以预览、选择和编辑。"
 
-### 类型C：Furry专项（用于兽人特征）
-\`\`\`
-【关键词】肉垫, paw pads, 爪子
-【内容】
-（角色名）的后足底部有黑色肉垫，分为四个趾垫和一个掌垫。质地柔软有弹性，温暖湿润。趾缝和肉垫边缘是敏感区域。爪子锋利，平时收起，战斗时伸出。
-\`\`\`
+### 第四步：解释价值
 
-## 质量标准
-✅ 好的条目：
-- 多个关键词（中英文、别名）
-- 内容精炼（50-150字）
-- 包含关联信息
-- 突出特征细节
+简要说明世界书的好处：
+- 节省token（不需要把所有信息都写进角色描述）
+- 动态激活（只在提到关键词时注入）
+- 避免AI遗忘（长对话中AI会忘记细节，世界书会自动提醒）
+- 支持复杂世界观（多角色、多地点、多设定）
 
-❌ 避免：
-- 内容过长（>300字）
-- 关键词太宽泛（"他"、"的"）
-- 重复信息
-- 缺少关键词
+## 注意事项
 
-## 你的回复模板
+✅ **要做的**：
+- 分析前6个阶段的内容，特别是阶段3的关系网络
+- 建议具体的条目类型和名称
+- 引导用户思考世界观的各个方面
+- 提醒用户使用下方的"AI生成世界书"按钮
 
-"让我们完善角色的世界观。根据你前面的设定，我建议创建以下世界书条目：
+❌ **不要做的**：
+- 不要在对话中直接输出世界书格式（那是WorldBookEditor的AI的工作）
+- 不要生成过于宽泛的建议（要具体到角色名、地点名）
+- 不要遗漏阶段3的配角/NPC
 
-1. **【XX地点】** - 角色的主要活动区域
-2. **【XX人物】** - 重要的NPC角色
-3. **【XX物品】** - 标志性道具
-4. **【XX规则】** - （如有）游戏机制/魔法系统
+## 你的回复示例
 
-要我帮你生成这些条目吗？或者你想先讨论世界观的其他方面？
+"让我分析一下前面的设定，看看需要创建哪些世界书条目...
 
-💡 世界书条目会在对话中自动激活，让AI知道相关背景，而不占用常驻token。"
+根据你的角色，我建议创建以下条目：
 
-确保世界设定与角色的物种、背景、专项深化完全一致。`,
+📍 **地点**：
+- 阳光之家孤儿院（主要活动场所）
+
+👥 **人物**：
+- 铁（主角，核心角色）
+- 白熊（配角，暗恋对象，从阶段3提取）
+
+🎭 **事件**：
+- 海边之夜（重要背景事件）
+
+🐾 **Furry设定**（如适用）：
+- 信息素系统（兽人的气味机制）
+- 兽人特征（耳朵、尾巴的情绪表达）
+
+你可以点击下方的"✨ AI生成世界书"按钮，让AI根据前6个阶段的内容自动生成这些条目。生成后你可以预览并选择需要的条目。
+
+或者你想先讨论其他方面的世界观？"`,
 
   `【阶段7：质量检查】
 回顾完整的角色设定。请检查：
@@ -792,46 +866,608 @@ const STAGE_PROMPTS = [
 - 是否有矛盾或遗漏
 提供改进建议。`,
 
-  `【阶段8：导出】
-恭喜完成角色创作！总结角色的核心特点，提醒用户导出。`,
+  `【阶段9：角色卡数据生成 - 第1步：完整描述】
+
+你的任务是将阶段1-5的所有内容，**逐字复制并分类整理**成【完整描述】字段。
+
+⚠️ **本步骤只生成【完整描述】，其他字段（性格、场景、首条消息等）稍后生成！**
+
+⚠️ **核心原则**：
+1. **你的职责是"分类员 + 复印机"，不是"编辑"或"摘要生成器"**：
+   - ✅ 识别原文哪些内容属于"基本信息"、"背景"、"关系"、"外貌"、"专项"
+   - ✅ 为不同类别添加清晰的大标题（#### **基本信息**、#### **深度背景** 等）
+   - ✅ 把原文内容**逐字逐句复制**到对应大标题下
+   - ❌ 不要改写或重新表述内容
+   - ❌ 不要总结或压缩细节
+   - ❌ 不要筛选"重要的"内容，要转移"所有的"内容
+
+2. **保持原文的所有格式**：小标题、列表、段落、缩进等
+
+3. **完整转移所有内容**：
+   - 如果原文有100句话，你的输出也要有100句话
+   - 如果原文有50个列表项，你的输出也要有50个列表项
+   - 如果原文有10000字，你的输出也要有10000字
+
+⚠️ **字数要求**：
+- 【完整描述】应包含至少10000-15000字（整合阶段1-5的所有内容）
+- 如果你发现自己在"总结"或"简化"，立即停止，改为**原样转移**
+
+## 你的任务
+
+**只生成【完整描述】字段，不要生成其他内容！**
+
+### 【完整描述】字段要求：
+
+⚠️ **这不是"摘要"或"精选"，而是"搬家"！**
+- 阶段1-5的所有文字、所有条目、所有段落都要搬过来
+- 不要挑"重要的"写，要把"所有的"都写
+- 目标字数：10000-15000字（这是合理的，因为你在搬运5个阶段的内容）
+   
+   **⚠️ 你的任务：识别内容 → 分类到对应标题下 → 原样转移**
+   
+   **从阶段1提取并分类**（必须包含）：
+   * 识别主角的所有详细信息 → 原样转移到【基本信息（主角）】
+   * ⭐ 识别角色2（用户扮演角色）的完整档案 → 原样转移到【关系网络】
+   * 识别次要角色的信息 → 原样转移到【关系网络】
+   * 如果有主角团的信息 → 原样转移到【关系网络】
+   * 💬 对话补充部分（如果有）→ 原样转移到对应位置
+   
+   **从阶段2提取并分类**（必须包含）：
+   * 识别主角背景的内容 → 原样转移到【深度背景与动机】
+   * 识别**人际关系网络**的内容 → 原样转移到【关系网络】
+   * 💬 对话补充部分（如果有）→ 原样转移到对应位置
+   
+   **从阶段3提取并分类**（必须包含）：
+   * 识别所有角色的关系网络 → 原样转移到【关系网络】
+   * 识别每个重要角色的档案 → 原样转移到【关系网络】对应角色下
+   * 💬 对话补充部分（如果有）→ 原样转移到对应位置
+   
+   **从阶段4提取并分类**（必须包含）：
+   * 识别主角的所有物理描写 → 原样转移到【外貌与物理特征】
+   * 识别配角的物理描写（如果有）→ 原样转移到【关系网络】对应角色下
+   * 💬 对话补充部分（如果有）→ 原样转移到对应位置
+   
+   **从阶段5提取并分类**（必须包含，这是关键！）：
+   * ⭐ 识别阶段5的所有内容 → 原样转移到【专项深化】
+   * ⭐ 保持原文的所有格式、结构、层级、段落、缩进
+   * ⭐ 如果阶段5包含主角的专项深化 → 原样转移
+   * ⭐ 如果阶段5包含配角的专项深化 → 原样转移到【关系网络】对应角色下或【专项深化】独立段落
+   
+   **组织方式**：
+   - 使用清晰的大标题分隔不同阶段（如 #### **基本信息**、#### **深度背景**、#### **关系网络**、#### **外貌特征**、#### **专项深化**）
+   - **保持原文的所有格式**：标题、子标题、列表（- 或 *）、段落、缩进等
+   - **不要改变原文的内容和用词**
+   - **如果原文有标题，保留标题；如果没有标题，按原有段落/结构完整复制**
+
+## 输出格式（严格遵循）
+
+⚠️ **本步骤只输出【完整描述】，不要输出其他内容！**
+
+请按照以下格式输出：
+
+【完整描述】
+#### **基本信息**（主角）
+（⚠️ 逐条复制阶段1主角部分的所有内容，保持原文的所有字段和详细程度）
+（⚠️ 如果有💬对话补充，也要完整复制）
+
+#### **深度背景与动机**
+（⚠️ 完整复制阶段2的所有内容，保持原有格式：）
+（⚠️ 如果有小标题，保留小标题；如果是段落式描写，保留段落；如果是列表，保留列表）
+（⚠️ 示例：如果原文是"- **出生与成长**：...内容..."，就完整复制；如果原文是自由段落"他自幼被遗弃..."，也完整复制）
+（⚠️ 如果有💬对话补充，也要完整复制）
+
+#### **关系网络**
+⚠️ **必须包含所有重要角色的完整档案！逐条复制阶段2和阶段3的所有内容！**
+
+**主角与XXX的关系**：
+（⚠️ 完整复制阶段2和阶段3中关系部分的所有内容）
+
+**角色：XXX（用户扮演）**
+（⚠️ 逐条复制阶段1中该角色的所有信息，保持原文的所有字段）
+- **[阶段1中该角色的第一个字段]**：...（完整复制）
+- **[阶段1中该角色的第二个字段]**：...（完整复制）
+...（继续复制所有字段）
+（⚠️ 如果阶段2、3、4、5有该角色的更多信息，也要完整复制）
+
+**次要角色**：
+（列出所有次要角色）
+
+#### **外貌与物理特征**（主角）
+（⚠️ 逐条复制阶段4的所有内容：）
+- **[阶段4的第一个小标题]**：...（完整复制原文）
+- **[阶段4的第二个小标题]**：...（完整复制原文）
+- **[阶段4的第三个小标题]**：...（完整复制原文）
+...（继续复制阶段4的所有内容，保持原有结构）
+（⚠️ 如果有💬对话补充，也要完整复制）
+
+#### **专项深化**（Psyche & Furry / 其他专项）
+（⚠️ 这是关键部分！逐条复制阶段5的所有内容，不要遗漏任何细节！）
+（⚠️ 完整复制阶段5中所有小标题和详细描写，包括但不限于：）
+- **[阶段5的第一个小标题]**：...（完整复制原文的所有描写）
+- **[阶段5的第二个小标题]**：...（完整复制原文的所有描写）
+- **[阶段5的第三个小标题]**：...（完整复制原文的所有描写）
+...（继续复制阶段5的所有内容，保持原有结构和层级）
+
+（⚠️ 如果阶段5有配角的专项深化，也要完整复制！）
+
+---
+
+**完成后，请直接输出以上内容，不要添加任何寒暄或解释！**
+
+## 数据来源（仅阶段1-5）
+
+- **阶段1（基础身份）**: 主角和所有角色的基础信息
+- **阶段2（深度背景）**: 主角背景、经历、动机、人际关系
+- **阶段3（关系网络）**: 所有角色的关系、互动方式
+- **阶段4（物理描写）**: 主角和配角的外貌、体型、特征
+- **阶段5（专项深化）**: 主角和配角的专项内容
+
+## 核心原则
+
+**你的任务是"分类员 + 搬运工"，不是"编辑"或"作家"！**
+
+✅ **你的工作流程**：
+1. **第一步：识别内容**
+   - 阅读阶段1-5的所有内容
+   - 识别哪些内容属于"基本信息"、"背景"、"关系"、"外貌"、"专项"
+   
+2. **第二步：添加分类标题**
+   - 为【完整描述】添加大标题：#### **基本信息**、#### **深度背景**、#### **关系网络**、#### **外貌特征**、#### **专项深化**
+   
+3. **第三步：逐句复制内容（最重要！）**
+   - 把识别出的内容**逐句、逐条、逐字复制**到对应大标题下
+   - ⚠️ **不要筛选**：如果原文有10条细节，你必须写10条，不能只写3-5条！
+   - ⚠️ **不要省略**：如果原文有3段描写，你必须写3段，不能合并成1段！
+   - ⚠️ **不要精简**：如果原文一句话有50字，你必须写50字，不能缩减成20字！
+   - 保持原文的所有格式：小标题、列表（- 或 *）、段落、缩进
+   - 保持原文的所有用词：不要改写或重新表述
+   - 保持原文的所有细节：不要总结或压缩
+
+✅ **特别注意**：
+- ⭐ 阶段5的**专项深化**是重点！必须原样转移所有详细描写（无论是什么类型的专项）
+- ⭐ **配角的完整档案**必须包含：从阶段1-5提取该配角的所有信息，原样转移到【关系网络】对应角色下
+- 【完整描述】的目标字数：**10000-15000字**（不要少于10000字）
+
+❌ **严禁的行为**：
+- ❌ **严禁筛选或精简**
+  - 错误示例1：原文有10条外貌特征（身高、体型、毛发、眼睛、耳朵...），你只写了5条 → 这是筛选！
+  - 错误示例2：原文"毛皮质感：双层结构。外层护毛结实顺滑，有阻力感；内层底绒柔软绵密..."（50字），你写成"毛皮质感：双层，柔软"（8字）→ 这是精简！
+  - 正确做法：原文有多少条就写多少条，原文有多少字就写多少字
+- ❌ **严禁总结或压缩**
+  - 错误示例："角色有详细的XX特征描写"（这是总结！）
+  - 正确做法：把"详细的XX特征描写"的每一句话都完整复制出来
+- ❌ **严禁改写或重新表述**
+  - 错误示例：把"他自幼被遗弃"改写成"角色童年缺乏关爱"（这是改写！）
+  - 正确做法：保持原文"他自幼被遗弃"
+- ❌ **严禁省略任何段落、列表项、描写细节**
+- ❌ **严禁遗漏阶段5的专项深化细节**（无论是什么类型的专项）
+- ❌ **严禁遗漏配角的详细信息**
+- ❌ **严禁遗漏💬对话补充部分**
+- ❌ 不要写"恭喜"、"完成"等寒暄
+
+**记住**：
+1. 你的价值在于**识别 + 分类 + 组织**，而不是改写内容！
+2. 【完整描述】10000-15000字是正常的！不要觉得"太长了"而精简！
+3. 如果你的输出少于10000字，说明你在筛选和精简，这是错误的！
+
+立即开始输出：`,
 ];
 
+// 阶段9-第2步的提示词
+const STAGE9_STEP2_PROMPT = `【阶段9：角色卡数据生成 - 第2步：其他字段】
+
+你的任务是根据前8个阶段的内容，生成角色卡的其他必填和可选字段。
+
+⚠️ **【完整描述】已在第1步生成，本步骤不要重复生成！**
+
+## 需要生成的字段：
+
+### 必填字段
+
+1. **【角色名】**: 主角的名字（从阶段1提取）
+
+2. **【性格】**: 详细性格描述（从阶段1直接提取，保持原有详细程度）
+
+3. **【场景设定】**: 世界观和情境（从阶段7直接提取，保持原有详细程度）
+
+4. **【首条消息】**: 第三人称开场场景（从阶段6提取或创作，100-300字）
+
+5. **【对话示例】**: 3-5组对话（从阶段6提取或创作，使用{{char}}和{{user}}，用<START>分隔）
+
+### 可选字段（如适用）
+
+6. **【创作者备注】**: 角色玩法提示（50-100字，可选）
+
+7. **【系统提示词】**: AI行为指导（简短指令，可选）
+
+8. **【备用开场白】**: 1-2个不同情境的开场（可选）
+
+## 输出格式（严格遵循）
+
+【角色名】
+（主角的名字）
+
+【性格】
+（详细性格描述，从阶段1提取）
+
+【场景设定】
+（世界观和情境，从阶段7提取）
+
+【首条消息】
+（第三人称场景描写，从阶段6提取或创作）
+
+【对话示例】
+（3-5组对话，使用{{char}}和{{user}}）
+
+【创作者备注】
+（可选）
+
+【系统提示词】
+（可选）
+
+【备用开场白】
+（可选）
+
+---
+
+⚠️ **注意**：
+- 【性格】和【场景设定】直接从原阶段提取，不要压缩
+- 【首条消息】和【对话示例】优先使用阶段6的原文
+- 使用{{char}}代替角色真实姓名，使用{{user}}代替用户
+- 不要寒暄，立即开始输出：`;
+
 const SUMMARY_PROMPTS = [
-  '请简洁总结用户在本阶段确定的基础身份信息，只列出最终确定的内容（名称、物种、性格、年龄性别），不包括讨论过程。',
-  '请简洁总结用户确定的背景信息，只列出最终确定的内容（出生地、经历、动机、关系），不包括讨论过程。',
-  '请简洁总结用户确定的物理描写，只列出最终确定的内容（外貌、体型、特征、穿着），不包括讨论过程。',
-  '请简洁总结用户在专项深化阶段确定的所有细节内容，只列出最终确定的内容，不包括讨论过程。',
-  '请简洁总结用户确定的互动设计，只列出最终确定的内容（首条消息、对话风格、示例），不包括讨论过程。',
-  '请简洁总结用户确定的世界整合内容，只列出最终确定的内容（场景、世界观、世界书条目），不包括讨论过程。',
-  '请简洁总结质量检查的结果和需要改进的地方。',
-  '',
+  '请完整总结本阶段确定的所有主要角色的基础身份信息。⚠️ 必须包含每个角色的：角色名、扮演方式、物种、年龄、性别、核心性格、外在印象、体型、气质等。如果有用户扮演角色或NPC，也要详细列出他们的信息！保留所有关键细节，只列出最终确定的内容，不包括讨论过程和寒暄用语。',
+  '请完整总结本阶段确定的背景信息（如出生地、重要经历、核心动机、成长环境等），保留所有关键细节，只列出最终确定的内容，不包括讨论过程和寒暄用语。',
+  '请完整总结本阶段确定的关系网络信息。⚠️ 必须包含每个重要角色的：角色名、角色类型（AI扮演/用户扮演/NPC）、物种、性格特征、外貌印象、与主角的关系、互动模式等。保留所有关键细节，只列出最终确定的内容，不包括讨论过程和寒暄用语。',
+  '请完整总结本阶段确定的物理描写（如外貌、体型、毛色、特征、穿着、配饰等），保留所有关键细节，只列出最终确定的内容，不包括讨论过程和寒暄用语。',
+  '请完整总结本阶段确定的专项深化内容，保留所有关键细节，只列出最终确定的内容，不包括讨论过程和寒暄用语。',
+  '请完整总结本阶段确定的互动设计（如格式偏好、首条消息、对话风格、口头禅、对话示例等），保留所有关键细节，只列出最终确定的内容，不包括讨论过程和寒暄用语。',
+  '请完整总结本阶段确定的世界整合内容（如场景、世界观、世界书条目等），保留所有关键细节，只列出最终确定的内容，不包括讨论过程和寒暄用语。',
+  '请完整总结质量检查的结果和需要改进的地方，保留所有关键细节。',
+  '请严格按照【阶段9-第1步】的格式输出。只输出【完整描述】字段，不要输出其他内容！【完整描述】必须逐字复制阶段1-5的所有内容，分类到对应大标题下（基本信息、深度背景、关系网络、外貌特征、专项深化）。⚠️ 保持原文的所有细节、所有列表项、所有段落！不要筛选和精简！不要寒暄，立即开始输出：',
+];
+
+// 阶段9分步生成提示词（9步，连续对话，AI自主分类）
+const STAGE9_STEP_PROMPTS = [
+  // 第1步：处理阶段1
+  `📋 **任务说明**：
+我们正在生成角色卡的【完整描述】字段。这个字段包含5个大标题：
+- #### **基本信息**
+- #### **深度背景与动机**
+- #### **关系网络**
+- #### **外貌与物理特征**
+- #### **专项深化**
+
+你的任务是**逐步处理每个阶段的内容**，将内容分类到合适的大标题下。
+
+---
+
+🎯 **本步骤任务**：处理【阶段1：基础身份】的所有内容
+
+⚠️ **核心原则**：
+
+1. **识别内容的两个来源**：
+   - **导入内容**：小说AI的分析（通常在前面部分）
+   - **💬 对话补充**：用户后续讨论补充的信息（通常标记为"💬 **对话补充：**"）
+   
+2. **对同一角色的信息进行"完整融合"**（最重要！）：
+   - ✅ **融合策略**：
+     * 如果导入内容和对话补充都有该角色，识别为同一角色
+     * 创建一个**完整的角色档案**，包含两个来源的**所有字段**
+     * 保持导入内容的所有字段（名称、生物特征、外在印象、社会身份、性格等）
+     * 把对话补充中的新增信息添加进去
+     * 如果对话补充明确修正/否定了某个信息，使用对话补充的版本
+   - ❌ **严禁分别复制**：
+     * 不要把导入内容复制一遍，再把对话补充复制一遍
+     * 不要让同一角色出现两次
+   - ❌ **严禁遗漏字段**：
+     * 如果导入内容有"外在印象"字段，必须保留
+     * 如果导入内容有"社会身份"字段，必须保留
+     * 所有字段都要检查，不能遗漏
+
+3. **严禁精简**：
+   - ✅ 原文有10条就写10条
+   - ✅ 原文有1000字就写1000字
+   - ❌ 不要筛选"重要的"，要转移"所有的"
+   - ❌ 不要改写、总结、压缩
+
+📝 **输出格式**：
+
+**第一行必须是【完整描述】标记！**
+
+【完整描述】
+
+（然后才是内容）
+
+#### **基本信息**
+（融合后的所有角色档案，每个角色一个完整档案，包含所有字段）
+
+**示例**（如果有铁这个角色）：
+#### **基本信息**
+
+**角色：铁**
+- **名称相关**：...（完整复制）
+- **生物特征**：...（完整复制）
+- **外在印象**：...（⚠️ 不要遗漏！）
+- **社会身份**：...（完整复制）
+- **核心性格**：...（融合两个来源的所有性格描述）
+- **性格特质**：...（完整复制）
+- **扮演标注**：...
+
+（如果阶段1还有配角信息，放到关系网络）
+#### **关系网络**
+（配角的完整档案）
+
+---
+⚠️ 记住：融合而非复制两遍！不要遗漏任何字段！立即开始输出：`,
+
+  // 第2步：处理阶段2
+  `🎯 **继续任务**：处理【阶段2：深度背景】的所有内容
+
+你已经处理了阶段1，现在继续处理阶段2。
+
+⚠️ **核心原则**（同第1步）：
+1. **识别两个来源**：导入内容 + 💬 对话补充
+2. **完整融合**（不是分别复制）：
+   - 如果同一内容在两个来源都有，融合成一份
+   - 保留所有字段，不要遗漏
+   - 对话补充的新增信息要添加进去
+   - 如果对话补充修正了信息，用新版本
+3. **严禁精简**：所有细节都要保留
+
+📝 **输出格式**：
+
+**⚠️ 第一行必须是【完整描述】标记！**
+
+【完整描述】
+
+（然后输出相应大标题和内容，通常是深度背景或关系网络）
+
+#### **深度背景与动机**
+（融合后的完整背景信息）
+
+或/和
+
+#### **关系网络**
+（如果阶段2有关系信息，融合后的完整档案）
+
+---
+⚠️ 融合而非复制两遍！不要遗漏字段！第一行必须是【完整描述】！立即开始输出：`,
+
+  // 第3步：处理阶段3
+  `🎯 **继续任务**：处理【阶段3：关系网络】的所有内容
+
+⚠️ **核心原则**（同前）：
+- 识别导入内容 + 💬 对话补充
+- 完整融合（不是分别复制）
+- 保留所有字段，不要遗漏
+- 严禁精简
+
+📝 **输出格式**：
+
+**⚠️ 第一行必须是【完整描述】！**
+
+【完整描述】
+
+（然后输出相应大标题和内容）
+
+---
+⚠️ 第一行必须是【完整描述】！融合而非复制两遍！立即开始输出：`,
+
+  // 第4步：处理阶段4
+  `🎯 **继续任务**：处理【阶段4：物理描写】的所有内容
+
+⚠️ **核心原则**（同前）：
+- 识别导入内容 + 💬 对话补充
+- 完整融合（不是分别复制）
+- 保留所有字段，不要遗漏
+- 严禁精简
+
+📝 **输出格式**：
+
+**⚠️ 第一行必须是【完整描述】！**
+
+【完整描述】
+
+（然后输出相应大标题和内容）
+
+---
+⚠️ 第一行必须是【完整描述】！融合而非复制两遍！立即开始输出：`,
+
+  // 第5步：处理阶段5
+  `🎯 **继续任务**：处理【阶段5：专项深化】的所有内容
+
+⚠️ **核心原则**（同前）：
+- 识别导入内容 + 💬 对话补充
+- 完整融合（不是分别复制）
+- 保留所有字段，不要遗漏
+- **这是关键内容，必须完整保留所有细节！**
+- 严禁精简
+
+📝 **输出格式**：
+
+**⚠️ 第一行必须是【完整描述】！**
+
+【完整描述】
+
+（然后输出相应大标题和内容）
+
+---
+⚠️ 第一行必须是【完整描述】！融合而非复制两遍！立即开始输出：`,
+
+  // 第6步：处理阶段6
+  `🎯 **继续任务**：处理【阶段6：互动设计】的所有内容
+
+⚠️ **核心原则**（同前）：
+- 识别导入内容 + 💬 对话补充
+- 完整融合（不是分别复制）
+- 保留所有字段，不要遗漏
+- 严禁精简
+
+📝 **输出格式**：
+
+**⚠️ 第一行必须是【完整描述】！**
+
+【完整描述】
+
+（然后输出相应大标题和内容）
+
+---
+⚠️ 第一行必须是【完整描述】！融合而非复制两遍！立即开始输出：`,
+
+  // 第7步：处理阶段7
+  `🎯 **继续任务**：处理【阶段7：世界整合】的所有内容
+
+⚠️ **核心原则**（同前）：
+- 识别导入内容 + 💬 对话补充
+- 完整融合（不是分别复制）
+- 保留所有字段，不要遗漏
+- 严禁精简
+
+📝 **输出格式**：
+
+**⚠️ 第一行必须是【完整描述】！**
+
+【完整描述】
+
+（然后输出相应大标题和内容）
+
+---
+⚠️ 第一行必须是【完整描述】！融合而非复制两遍！立即开始输出：`,
+
+  // 第8步：处理阶段8
+  `🎯 **继续任务**：处理【阶段8：质量检查】的所有内容
+
+⚠️ **核心原则**（同前）：
+- 识别导入内容 + 💬 对话补充
+- 完整融合（不是分别复制）
+- 保留所有字段，不要遗漏
+- 严禁精简
+
+📝 **输出格式**：
+
+**⚠️ 第一行必须是【完整描述】！**
+
+【完整描述】
+
+（然后输出相应大标题和内容）
+
+---
+⚠️ 第一行必须是【完整描述】！融合而非复制两遍！立即开始输出：`,
+
+  // 第9步：生成其他字段
+  `🎯 **最后一步**：生成角色卡的其他必填字段
+
+【完整描述】已经完成，现在生成其他字段。
+
+⚠️ **核心原则**（同前）：
+- 识别阶段1、6、7的导入内容 + 💬 对话补充
+- 完整融合两个来源的信息
+- 保持原有详细程度，不要精简
+- 如果对话补充修正了信息，使用新版本
+
+📝 **输出格式**（严格按此格式）：
+
+【角色名】
+（从阶段1提取主角的名字，如果有多个名称/昵称，都要列出）
+
+【性格】
+（融合阶段1的导入内容和对话补充中的性格描述，保持原有详细程度，不要精简）
+
+【场景设定】
+（融合阶段7的导入内容和对话补充中的世界观、情境，保持原有详细程度，不要精简）
+
+【首条消息】
+（从阶段6提取或创作第三人称开场场景，100-300字，尽量使用已有内容）
+
+【对话示例】
+<START>
+{{user}}：...
+{{char}}：...
+
+<START>
+{{user}}：...
+{{char}}：...
+
+<START>
+{{user}}：...
+{{char}}：...
+
+（从阶段6提取或创作3-5组对话，使用{{char}}和{{user}}，展现角色性格特点）
+
+【创作者备注】
+（可选，角色玩法提示，50-100字）
+
+【系统提示词】
+（可选，AI行为指导）
+
+【备用开场白】
+（可选，1-2个不同情境的开场，每个100-300字）
+
+---
+⚠️ 融合而非复制两遍！保持详细程度！严格按标记格式输出！立即开始：`,
 ];
 
 export default function StageFlow() {
-  const [currentStage, setCurrentStage] = useState(0);
+  // 使用progressStore保存创作进度（自动持久化）
+  const {
+    getCurrentProject,
+    updateProgress,
+    clearCurrentProject,
+    createProject,
+    hasSavedProgress,
+  } = useProgressStore();
+  
+  const currentProject = getCurrentProject();
+  const stageResults = currentProject?.stageResults || [];
+  const currentStage = currentProject?.currentStage || 0;
+  const stageMessages = currentProject?.stageMessages || [[], [], [], [], [], [], [], [], []];
+  const selectedSpecialty = currentProject?.selectedSpecialty || null;
+  const lastSaved = currentProject?.lastSaved || null;
+  
   const [userInput, setUserInput] = useState('');
-  const [selectedSpecialty, setSelectedSpecialty] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string>('');
   const [showSpecialtySelection, setShowSpecialtySelection] = useState(false);
-  
-  // 每个阶段的对话历史（仅用于当前阶段显示）
-  const [stageMessages, setStageMessages] = useState<Array<Array<{ role: string; content: string }>>>([
-    [], [], [], [], [], [], [], [] // 8个阶段
-  ]);
-  
-  // 每个阶段的成果总结（传递给后续阶段）
-  const [stageResults, setStageResults] = useState<string[]>([]);
   
   const [showExport, setShowExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showImportCard, setShowImportCard] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  
+  // 阶段9：累积式填充内容
+  const [stage9AccumulatedContent, setStage9AccumulatedContent] = useState('【完整描述】\n\n');
+  const [stage9Step, setStage9Step] = useState(0); // 当前进行到第几步（0-6）
+  const [showStage9Editor, setShowStage9Editor] = useState(false); // 是否显示文本编辑器
+  
   const { generateResponse, loading } = useAIService();
+  const { parseFromStageResults } = useCharacterStore();
+  
+  // 处理导出按钮点击：自动解析stageResults到character
+  const handleExportClick = () => {
+    // ⚠️ 特殊处理阶段9：如果阶段9有AI对话但没有总结，将最后一条AI回复作为stageResults[8]
+    const finalStageResults = [...stageResults];
+    if (currentStage === 8 && stageMessages[8] && stageMessages[8].length > 0 && !stageResults[8]) {
+      // 找到最后一条AI回复
+      const lastAIMessage = [...stageMessages[8]].reverse().find(msg => msg.role === 'assistant');
+      if (lastAIMessage && lastAIMessage.content.includes('【角色名】')) {
+        // 如果AI回复包含结构化数据标记，使用它
+        finalStageResults[8] = lastAIMessage.content;
+        // 保存到store（可选，因为导出时已经用了）
+        updateProgress({ stageResults: finalStageResults });
+      }
+    }
+    
+    parseFromStageResults(finalStageResults);
+    setShowExport(true);
+  };
 
   // 处理导入完成（文本分析或角色卡）
   const handleImportComplete = (importedResults: string[]) => {
-    setStageResults(importedResults);
-    // 导入后跳转到阶段1查看
-    setCurrentStage(0);
+    updateProgress({
+      stageResults: importedResults,
+      currentStage: 0,
+    });
   };
 
   const currentMessages = stageMessages[currentStage];
@@ -845,25 +1481,39 @@ export default function StageFlow() {
     // 更新当前阶段的消息
     const newStageMessages = [...stageMessages];
     newStageMessages[currentStage] = updatedMessages;
-    setStageMessages(newStageMessages);
+    updateProgress({ stageMessages: newStageMessages });
     setUserInput('');
+    setErrorMessage(''); // 清除之前的错误
 
-    try {
-      // 构建上下文：只包含之前阶段的成果 + 当前阶段的对话
+    try{
+      // 构建上下文：包含之前阶段的成果 + 当前阶段已有的总结（如果有导入的）+ 当前阶段的对话
       const contextForAI = [
-        // 只添加当前阶段之前的成果总结（不包括之后的）
+        // 添加当前阶段之前的成果总结
         ...stageResults.slice(0, currentStage).map((result, idx) => ({
           role: 'system' as const,
           content: `【阶段${idx + 1}确定的内容】\n${result}`
         })),
+        // 🔧 修复：如果当前阶段已有总结（导入的内容），也要让AI知道
+        ...(stageResults[currentStage] ? [{
+          role: 'system' as const,
+          content: `【阶段${currentStage + 1}已有的内容（可在此基础上继续完善）】\n${stageResults[currentStage]}`
+        }] : []),
         // 添加当前阶段的对话（包括历史对话，让AI知道之前讨论了什么）
         ...updatedMessages
       ];
 
-      // 如果是阶段4且用户已选择专项类型，使用专项提示词
-      const stagePrompt = currentStage === 3 && selectedSpecialty 
-        ? SPECIALTY_PROMPTS[selectedSpecialty]
-        : STAGE_PROMPTS[currentStage];
+      // 选择合适的提示词
+      let stagePrompt;
+      if (currentStage === 4 && selectedSpecialty) {
+        // 阶段5（专项深化）：使用专项提示词
+        stagePrompt = SPECIALTY_PROMPTS[selectedSpecialty];
+      } else if (currentStage === 8 && userInput.includes('【执行第2步】')) {
+        // 阶段9-第2步：生成其他字段
+        stagePrompt = STAGE9_STEP2_PROMPT;
+      } else {
+        // 其他情况：使用标准阶段提示词
+        stagePrompt = STAGE_PROMPTS[currentStage];
+      }
       
       const response = await generateResponse(
         contextForAI,
@@ -871,87 +1521,341 @@ export default function StageFlow() {
       );
       
       newStageMessages[currentStage] = [...updatedMessages, { role: 'assistant', content: response }];
-      setStageMessages(newStageMessages);
-    } catch (error) {
+      
+      // ⚠️ 特殊处理：如果是阶段9，并且AI回复包含结构化数据标记，自动保存到stageResults
+      if (currentStage === 8 && (response.includes('【角色名】') || response.includes('【完整描述】'))) {
+        const newResults = [...stageResults];
+        // 如果是第1步（包含【完整描述】）或完整输出，替换整个结果
+        // 如果是第2步（包含【角色名】但不含【完整描述】），追加到现有结果
+        if (response.includes('【完整描述】')) {
+          // 第1步：只有【完整描述】
+          newResults[8] = response;
+        } else if (response.includes('【角色名】')) {
+          // 第2步：追加其他字段
+          if (stageResults[8]) {
+            newResults[8] = stageResults[8] + '\n\n' + response;
+          } else {
+            newResults[8] = response;
+          }
+        }
+        updateProgress({ 
+          stageMessages: newStageMessages,
+          stageResults: newResults 
+        });
+      } else {
+        updateProgress({ stageMessages: newStageMessages });
+      }
+    } catch (error: any) {
       console.error('AI 响应失败:', error);
+      
+      // 提取详细错误信息
+      let errorDetail = 'AI 响应失败';
+      if (error?.response?.data?.error) {
+        errorDetail = `API错误: ${error.response.data.error.message || error.response.data.error}`;
+      } else if (error?.message) {
+        errorDetail = `错误: ${error.message}`;
+      } else if (typeof error === 'string') {
+        errorDetail = error;
+      }
+      
+      setErrorMessage(errorDetail);
+      
       newStageMessages[currentStage] = [...updatedMessages, { 
         role: 'assistant', 
-        content: '抱歉，AI 响应失败。请检查设置中的API配置，或稍后重试。' 
+        content: `❌ ${errorDetail}\n\n请检查：\n- API密钥是否正确\n- 网络连接是否正常\n- API服务是否可用\n- 请求是否超出配额限制` 
       }];
-      setStageMessages(newStageMessages);
+      updateProgress({ stageMessages: newStageMessages });
     }
   };
 
-  const goToNextStage = async () => {
-    if (currentStage >= 7) return; // 更新为7（0-7共8个阶段）
+  // 重新生成最后一条AI回复
+  const handleRegenerate = async (messageIndex: number) => {
+    if (loading || messageIndex < 1) return;
     
-    // 如果当前阶段有对话，生成总结
-    if (currentMessages.length > 0 && currentStage < 7) {
+    setErrorMessage('');
+    
+    // 获取到该消息之前的所有消息（不包括要重新生成的AI消息）
+    const messagesUpToUser = currentMessages.slice(0, messageIndex);
+    
+    // 更新消息历史，移除要重新生成的AI消息
+    const newStageMessages = [...stageMessages];
+    newStageMessages[currentStage] = messagesUpToUser;
+    updateProgress({ stageMessages: newStageMessages });
+    
+    try {
+      // 构建上下文
+      const contextForAI = [
+        ...stageResults.slice(0, currentStage).map((result, idx) => ({
+          role: 'system' as const,
+          content: `【阶段${idx + 1}确定的内容】\n${result}`
+        })),
+        ...(stageResults[currentStage] ? [{
+          role: 'system' as const,
+          content: `【阶段${currentStage + 1}已有的内容（可在此基础上继续完善）】\n${stageResults[currentStage]}`
+        }] : []),
+        ...messagesUpToUser
+      ];
+      
+      // 选择合适的提示词
+      let stagePrompt;
+      // 检查最后一条用户消息是否为第2步指令
+      const lastUserMessage = messagesUpToUser.length > 0 ? messagesUpToUser[messagesUpToUser.length - 1] : null;
+      if (currentStage === 4 && selectedSpecialty) {
+        stagePrompt = SPECIALTY_PROMPTS[selectedSpecialty];
+      } else if (currentStage === 8 && lastUserMessage && lastUserMessage.content.includes('【执行第2步】')) {
+        stagePrompt = STAGE9_STEP2_PROMPT;
+      } else {
+        stagePrompt = STAGE_PROMPTS[currentStage];
+      }
+      
+      const response = await generateResponse(contextForAI, stagePrompt);
+      
+      // 添加新的AI回复
+      newStageMessages[currentStage] = [
+        ...messagesUpToUser,
+        { role: 'assistant', content: response }
+      ];
+      
+      // ⚠️ 特殊处理：如果是阶段9，并且AI回复包含结构化数据标记，自动保存到stageResults
+      if (currentStage === 8 && (response.includes('【角色名】') || response.includes('【完整描述】'))) {
+        const newResults = [...stageResults];
+        if (response.includes('【完整描述】')) {
+          // 第1步：只有【完整描述】
+          newResults[8] = response;
+        } else if (response.includes('【角色名】')) {
+          // 第2步：追加其他字段
+          if (stageResults[8]) {
+            newResults[8] = stageResults[8] + '\n\n' + response;
+          } else {
+            newResults[8] = response;
+          }
+        }
+        updateProgress({ 
+          stageMessages: newStageMessages,
+          stageResults: newResults 
+        });
+      } else {
+        updateProgress({ stageMessages: newStageMessages });
+      }
+      
+    } catch (error: any) {
+      console.error('重新生成失败:', error);
+      
+      let errorDetail = '重新生成失败';
+      if (error?.response?.data?.error) {
+        errorDetail = `API错误: ${error.response.data.error.message || error.response.data.error}`;
+      } else if (error?.message) {
+        errorDetail = `错误: ${error.message}`;
+      }
+      
+      setErrorMessage(errorDetail);
+      
+      // 显示错误消息
+      newStageMessages[currentStage] = [
+        ...messagesUpToUser,
+        { role: 'assistant', content: `❌ ${errorDetail}` }
+      ];
+      updateProgress({ stageMessages: newStageMessages });
+    }
+  };
+
+  const goToNextStage = async (shouldSummarize: boolean = false) => {
+    if (currentStage >= 8) return; // 9个阶段（0-8），阶段9是导出
+    
+    // 如果用户选择生成总结
+    if (shouldSummarize && currentMessages.length > 0 && currentStage < 8) {
       setIsGeneratingSummary(true);
       try {
         // 让AI总结当前阶段的成果
+        // ⚠️ 临时方案：继续使用DEFAULT_PSYCHE_PROMPT，避免System Prompt切换导致的API错误
+        // 在对话末尾添加一个总结请求
+        const summaryRequest = [
+          ...currentMessages,
+          {
+            role: 'user',
+            content: `请总结一下我们刚才确定的内容。${SUMMARY_PROMPTS[currentStage]}`
+          }
+        ];
+        
         const summary = await generateResponse(
-          currentMessages,
-          SUMMARY_PROMPTS[currentStage]
+          summaryRequest,
+          undefined // 不传summarySystemPrompt，使用默认的DEFAULT_PSYCHE_PROMPT
         );
         
         // 保存总结
         const newResults = [...stageResults];
-        newResults[currentStage] = summary;
-        setStageResults(newResults);
+        const hadPreviousContent = !!stageResults[currentStage]; // 记录是否有旧内容
         
-        // 检查：如果当前阶段的总结与之前保存的不同（说明修改了）
-        // 清空后续阶段的对话和成果，因为前面修改了，后面可能不适用了
-        if (stageResults[currentStage] && stageResults[currentStage] !== summary) {
-          // 清空后续阶段的对话历史
+        // 如果当前阶段已有内容（导入的），将对话补充追加到后面，而不是覆盖
+        if (stageResults[currentStage]) {
+          newResults[currentStage] = stageResults[currentStage] + '\n\n---\n\n💬 **对话补充：**\n' + summary;
+        } else {
+        newResults[currentStage] = summary;
+        }
+        
+        // 检查：如果是首次创建内容（之前没有），不清空后续阶段
+        // 如果是修改已有内容，清空后续有对话历史的阶段
+        if (hadPreviousContent) {
+          // 清空后续有对话历史的阶段
           const newStageMessages = [...stageMessages];
-          for (let i = currentStage + 1; i < 8; i++) { // 更新为8
+          for (let i = currentStage + 1; i < 9; i++) {
+            // 如果这个阶段有对话历史，说明是用户创建的，需要清空
+            if (newStageMessages[i].length > 0) {
             newStageMessages[i] = [];
+              newResults[i] = ''; // 清空对应的总结
+            }
+            // 如果没有对话历史，说明是导入的，保留它
           }
-          setStageMessages(newStageMessages);
           
-          // 清空后续阶段的成果
-          const clearedResults = newResults.slice(0, currentStage + 1);
-          setStageResults(clearedResults);
+          updateProgress({ 
+            stageResults: newResults,
+            stageMessages: newStageMessages,
+          });
+        } else {
+          updateProgress({ stageResults: newResults });
         }
       } catch (error) {
         console.error('生成总结失败:', error);
         // 即使失败也继续，使用简单总结
         const newResults = [...stageResults];
         newResults[currentStage] = `阶段${currentStage + 1}的讨论内容`;
-        setStageResults(newResults);
+        updateProgress({ stageResults: newResults });
       }
       setIsGeneratingSummary(false);
     }
     
-    // 特殊处理：从阶段3进入阶段4时，显示专项选择界面
-    if (currentStage === 2) {
+    // 特殊处理：从阶段4（物理描写）进入阶段5（专项深化）时，显示专项选择界面
+    if (currentStage === 3) {
       setShowSpecialtySelection(true);
     } else {
-      setCurrentStage(currentStage + 1);
+      updateProgress({ currentStage: currentStage + 1 });
     }
   };
 
   const goToPreviousStage = () => {
     if (currentStage > 0) {
-      setCurrentStage(currentStage - 1);
+      updateProgress({ currentStage: currentStage - 1 });
     }
   };
 
   // 处理专项类型选择
   const handleSpecialtySelection = (specialtyId: string) => {
-    setSelectedSpecialty(specialtyId);
     setShowSpecialtySelection(false);
-    setCurrentStage(3); // 进入阶段4
+    updateProgress({ 
+      selectedSpecialty: specialtyId,
+      currentStage: 4, // 进入阶段5（专项深化）
+    });
   };
 
   // 处理跳过专项深化
   const handleSkipSpecialty = () => {
     setShowSpecialtySelection(false);
     const newResults = [...stageResults];
-    newResults[3] = '【用户选择跳过专项深化】';
-    setStageResults(newResults);
-    setCurrentStage(4); // 跳过阶段4，直接到阶段5
+    newResults[4] = '【用户选择跳过专项深化】';
+    updateProgress({ 
+      stageResults: newResults,
+      currentStage: 5, // 跳过阶段5（专项深化），直接到阶段6（互动设计）
+    });
+  };
+
+  // 阶段9：分步生成（连续对话模式）
+  const handleStage9StepGenerate = async (step: number) => {
+    if (currentStage !== 8 || loading) return;
+    
+    setErrorMessage('');
+    
+    try {
+      const newStageMessages = [...stageMessages];
+      const currentStage9Messages = stageMessages[8] || [];
+      
+      // 1. 添加用户消息（当前步骤的指令）
+      const userMessage = { role: 'user' as const, content: STAGE9_STEP_PROMPTS[step] };
+      const updatedMessages = [...currentStage9Messages, userMessage];
+      
+      // 2. 构建上下文：只给当前步骤需要的阶段内容 + 对话历史
+      let contextForAI: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
+      
+      if (step < 8) {
+        // 第1-8步：只给对应阶段的内容
+        if (stageResults[step]) {
+          contextForAI.push({
+            role: 'system' as const,
+            content: `【阶段${step + 1}确定的内容】\n${stageResults[step]}`
+          });
+        }
+      } else {
+        // 第9步（生成其他字段）：需要阶段1、6、7的内容
+        if (stageResults[0]) {
+          contextForAI.push({
+            role: 'system' as const,
+            content: `【阶段1确定的内容】\n${stageResults[0]}`
+          });
+        }
+        if (stageResults[5]) {
+          contextForAI.push({
+            role: 'system' as const,
+            content: `【阶段6确定的内容】\n${stageResults[5]}`
+          });
+        }
+        if (stageResults[6]) {
+          contextForAI.push({
+            role: 'system' as const,
+            content: `【阶段7确定的内容】\n${stageResults[6]}`
+          });
+        }
+      }
+      
+      // 添加阶段9的对话历史（包含刚添加的用户消息）
+      contextForAI.push(...updatedMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>);
+      
+      // 3. 调用AI（AI通过对话历史记住之前步骤的处理结果）
+      const response = await generateResponse(contextForAI, STAGE9_STEP_PROMPTS[step]);
+      
+      // 4. 保存AI回复到对话历史
+      newStageMessages[8] = [...updatedMessages, { role: 'assistant', content: response }];
+      updateProgress({ stageMessages: newStageMessages });
+      
+      // 5. 追加到累积内容（简单追加，后面再优化格式）
+      const newContent = stage9AccumulatedContent + response + '\n\n';
+      setStage9AccumulatedContent(newContent);
+      setStage9Step(step + 1);
+      
+    } catch (error: any) {
+      console.error('阶段9分步生成失败:', error);
+      let errorDetail = 'AI 响应失败';
+      if (error?.response?.data?.error) {
+        errorDetail = `API错误: ${error.response.data.error.message || error.response.data.error}`;
+      } else if (error?.message) {
+        errorDetail = `错误: ${error.message}`;
+      } else if (typeof error === 'string') {
+        errorDetail = error;
+      }
+      setErrorMessage(errorDetail);
+    }
+  };
+
+  // 阶段9：保存到角色卡
+  const handleSaveToCard = () => {
+    if (currentStage !== 8) return;
+    
+    const newResults = [...stageResults];
+    newResults[8] = stage9AccumulatedContent;
+    updateProgress({ stageResults: newResults });
+    
+    alert('✅ 已保存到角色卡！\n\n现在可以点击"导出角色卡"按钮导出JSON文件。');
+  };
+
+  // 删除消息
+  const handleDeleteMessage = (messageIndex: number) => {
+    if (loading || isGeneratingSummary) return;
+    
+    const currentMessages = stageMessages[currentStage] || [];
+    const newMessages = currentMessages.filter((_, idx) => idx !== messageIndex);
+    
+    const newStageMessages = [...stageMessages];
+    newStageMessages[currentStage] = newMessages;
+    
+    updateProgress({ stageMessages: newStageMessages });
   };
 
   return (
@@ -960,7 +1864,13 @@ export default function StageFlow() {
       <div className="bg-gradient-to-r from-indigo-500 to-purple-600 p-4">
         <div className="flex items-center justify-between text-white mb-2">
           <div className="flex items-center space-x-2">
-            <h3 className="font-semibold">阶段 {currentStage + 1}/8</h3>
+            <ProjectSelector />
+            <h3 className="font-semibold">阶段 {currentStage + 1}/9</h3>
+            {lastSaved && (
+              <span className="text-xs opacity-75">
+                💾 {new Date(lastSaved).toLocaleTimeString('zh-CN')}
+              </span>
+            )}
             <div className="flex items-center space-x-1">
               <button
                 onClick={() => setShowImport(true)}
@@ -978,6 +1888,30 @@ export default function StageFlow() {
                 <FileJson className="w-3 h-3" />
                 <span className="hidden sm:inline">角色卡</span>
               </button>
+              {hasSavedProgress() && (
+                <>
+                  <button
+                    onClick={() => {
+                      if (confirm('确定要清空当前项目内容吗？\n\n项目会保留，但所有创作内容将被清除。')) {
+                        clearCurrentProject();
+                      }
+                    }}
+                    className="px-2 py-1 bg-yellow-500/20 hover:bg-yellow-500/30 rounded text-xs flex items-center space-x-1 transition-colors"
+                    title="清空当前项目内容"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    <span className="hidden sm:inline">清空</span>
+                  </button>
+                  <button
+                    onClick={() => createProject()}
+                    className="px-2 py-1 bg-green-500/20 hover:bg-green-500/30 rounded text-xs flex items-center space-x-1 transition-colors"
+                    title="新建项目"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span className="hidden sm:inline">新建</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
           <span className="text-sm">{STAGES[currentStage]}</span>
@@ -985,7 +1919,7 @@ export default function StageFlow() {
         <div className="w-full bg-white/20 rounded-full h-2">
           <div
             className="bg-white rounded-full h-2 transition-all duration-300"
-            style={{ width: `${((currentStage + 1) / 8) * 100}%` }}
+            style={{ width: `${((currentStage + 1) / 9) * 100}%` }}
           />
         </div>
         {/* 已完成阶段提示 */}
@@ -1020,6 +1954,45 @@ export default function StageFlow() {
           </div>
         )}
 
+        {/* 🔧 显示当前阶段已有的总结（导入的内容） - 阶段9除外 */}
+        {currentStage !== 8 && stageResults[currentStage] && (() => {
+          const content = stageResults[currentStage];
+          const parts = content.split('\n\n---\n\n💬 **对话补充：**\n');
+          const importedContent = parts[0];
+          const dialogSupplement = parts[1];
+          
+          return (
+            <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border-2 border-green-200 dark:border-green-800">
+              <div className="flex items-center space-x-2 text-green-700 dark:text-green-300 mb-2">
+                <CheckCircle className="w-5 h-5" />
+                <div className="text-sm font-semibold">
+                  ✅ 当前阶段已有内容
+                </div>
+              </div>
+              
+              {/* 导入的内容 - 蓝色 */}
+              {importedContent && (
+                <div className="text-sm text-blue-700 dark:text-blue-300 bg-blue-50/50 dark:bg-blue-900/20 rounded p-3 whitespace-pre-wrap mb-3 border-l-4 border-blue-400">
+                  <div className="font-semibold mb-2 text-xs text-blue-600 dark:text-blue-400">📘 导入内容</div>
+                  {importedContent}
+                </div>
+              )}
+              
+              {/* 对话补充 - 绿色 */}
+              {dialogSupplement && (
+                <div className="text-sm text-green-700 dark:text-green-300 bg-green-50/50 dark:bg-green-900/20 rounded p-3 whitespace-pre-wrap border-l-4 border-green-400">
+                  <div className="font-semibold mb-2 text-xs text-green-600 dark:text-green-400">💬 对话补充</div>
+                  {dialogSupplement}
+                </div>
+              )}
+              
+              <div className="mt-2 text-xs text-green-600 dark:text-green-400">
+                💡 AI 已知道这些信息，您可以在此基础上继续完善和提问
+              </div>
+            </div>
+          );
+        })()}
+
         {currentMessages.length === 0 && (
           <div className="text-center text-slate-400 dark:text-slate-500 py-12">
             <Sparkles className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -1031,16 +2004,47 @@ export default function StageFlow() {
         {currentMessages.map((msg, idx) => (
           <div
             key={idx}
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} group`}
           >
+            <div className="flex items-start space-x-2 max-w-[85%]">
             <div
-              className={`max-w-[80%] px-4 py-2 rounded-lg ${
+                className={`flex-1 px-4 py-2 rounded-lg ${
                 msg.role === 'user'
                   ? 'bg-indigo-600 text-white'
                   : 'bg-slate-100 dark:bg-slate-700 text-slate-900 dark:text-white'
               }`}
             >
               <div className="whitespace-pre-wrap">{msg.content}</div>
+              </div>
+              
+              {/* 操作按钮 */}
+              <div className="flex items-start space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                {/* 重新生成按钮 - 只对最后一条AI消息显示 */}
+                {msg.role === 'assistant' && idx === currentMessages.length - 1 && !loading && !isGeneratingSummary && (
+                  <button
+                    onClick={() => handleRegenerate(idx)}
+                    className="p-2 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-lg"
+                    title="重新生成"
+                  >
+                    <RefreshCw className="w-4 h-4 text-slate-600 dark:text-slate-400" />
+                  </button>
+                )}
+                
+                {/* 删除按钮 - 对所有消息显示 */}
+                {!loading && !isGeneratingSummary && (
+                  <button
+                    onClick={() => {
+                      if (confirm('确定要删除这条消息吗？')) {
+                        handleDeleteMessage(idx);
+                      }
+                    }}
+                    className="p-2 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg"
+                    title="删除消息"
+                  >
+                    <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         ))}
@@ -1056,16 +2060,67 @@ export default function StageFlow() {
           </div>
         )}
 
-        {/* 阶段6：世界整合 - 显示世界书编辑器 */}
-        {currentStage === 5 && (
+        {/* 阶段7：世界整合 - 显示世界书编辑器 */}
+        {currentStage === 6 && (
           <div className="mt-6">
-            <WorldBookEditor />
+            <WorldBookEditor 
+              stageResults={stageResults} 
+              currentStageMessages={currentMessages}
+            />
+          </div>
+        )}
+        
+        {/* 阶段9：可折叠的文本编辑器 */}
+        {currentStage === 8 && showStage9Editor && (
+          <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border-2 border-purple-300 dark:border-purple-700">
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-sm font-semibold text-purple-900 dark:text-purple-200">
+                📝 累积内容编辑器（已完成 {stage9Step}/9 步）
+              </label>
+              <button
+                onClick={() => setShowStage9Editor(false)}
+                className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-200"
+                title="关闭编辑器"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <textarea
+              value={stage9AccumulatedContent}
+              onChange={(e) => setStage9AccumulatedContent(e.target.value)}
+              className="w-full h-96 px-3 py-2 border border-purple-300 dark:border-purple-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-mono resize-y focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              placeholder="点击下方步骤按钮，AI将逐步填充内容到这里..."
+            />
+            <div className="mt-2 text-xs text-purple-700 dark:text-purple-300">
+              💡 您可以随时编辑这里的内容。完成后点击下方"保存"按钮保存到角色卡。
+            </div>
           </div>
         )}
       </div>
 
       {/* 输入区域 */}
       <div className="border-t border-slate-200 dark:border-slate-700 p-4">
+        {/* 错误提示 */}
+        {errorMessage && (
+          <div className="mb-3 flex items-start space-x-2 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
+            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-red-800 dark:text-red-300 mb-1">
+                API调用失败
+              </div>
+              <div className="text-xs text-red-700 dark:text-red-400">
+                {errorMessage}
+              </div>
+            </div>
+            <button
+              onClick={() => setErrorMessage('')}
+              className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-200"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        
         <div className="flex space-x-2 mb-2">
           <input
             type="text"
@@ -1086,6 +2141,78 @@ export default function StageFlow() {
         </div>
 
         {/* 导航按钮 */}
+        <div className="space-y-2">
+          {/* 阶段9：分步生成按钮（紧凑布局） */}
+          {currentStage === 8 && (
+            <div className="flex flex-col gap-2 p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
+              <div className="text-xs font-semibold text-purple-900 dark:text-purple-200">
+                🎯 分步生成（共9步，连续对话，AI自主分类）：
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {[
+                  { label: '1.阶段1', step: 0 },
+                  { label: '2.阶段2', step: 1 },
+                  { label: '3.阶段3', step: 2 },
+                  { label: '4.阶段4', step: 3 },
+                  { label: '5.阶段5', step: 4 },
+                  { label: '6.阶段6', step: 5 },
+                  { label: '7.阶段7', step: 6 },
+                  { label: '8.阶段8', step: 7 },
+                  { label: '9.其他字段', step: 8 },
+                ].map(({ label, step }) => (
+                  <button
+                    key={step}
+                    onClick={() => handleStage9StepGenerate(step)}
+                    disabled={loading || isGeneratingSummary}
+                    className={`px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50 ${
+                      stage9Step > step
+                        ? 'bg-green-600 text-white'
+                        : 'bg-purple-600 text-white hover:bg-purple-700'
+                    }`}
+                    title={stage9Step > step ? '已完成' : '点击生成'}
+                  >
+                    {stage9Step > step && '✓ '}
+                    {label}
+                  </button>
+                ))}
+                
+                <button
+                  onClick={() => setShowStage9Editor(!showStage9Editor)}
+                  className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition-colors"
+                  title="查看/编辑累积内容"
+                >
+                  {showStage9Editor ? '隐藏编辑器' : '查看内容'}
+                </button>
+                
+                <button
+                  onClick={handleSaveToCard}
+                  disabled={stage9Step === 0}
+                  className="px-2 py-1 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center space-x-1"
+                  title="保存到角色卡"
+                >
+                  <Save className="w-3 h-3" />
+                  <span>保存</span>
+                </button>
+                
+                <button
+                  onClick={() => {
+                    if (confirm('确定要重置吗？')) {
+                      setStage9AccumulatedContent('【完整描述】\n\n');
+                      setStage9Step(0);
+                    }
+                  }}
+                  className="px-2 py-1 bg-slate-500 text-white rounded text-xs font-medium hover:bg-slate-600 transition-colors"
+                  title="重置所有内容"
+                >
+                  重置
+                </button>
+              </div>
+              <div className="text-xs text-purple-700 dark:text-purple-300">
+                💡 按顺序点击1-8步，AI逐步处理阶段1-8内容并自动分类（连续对话，AI能记住之前步骤）。第9步生成其他字段。完成后点"保存"→"导出角色卡"。
+              </div>
+            </div>
+          )}
+          
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-2">
             {currentStage > 0 && (
@@ -1099,34 +2226,52 @@ export default function StageFlow() {
               </button>
             )}
 
-            {currentStage < 6 && (
+              {currentStage < 8 && (
+                <>
+                  {/* 如果有对话，显示两个按钮 */}
+                  {currentMessages.length > 0 ? (
+                    <>
               <button
-                onClick={goToNextStage}
+                        onClick={() => goToNextStage(true)}
                 disabled={isGeneratingSummary}
-                className={`px-3 py-2 rounded-lg text-sm transition-colors flex items-center space-x-1 disabled:opacity-50 ${
-                  stageResults[currentStage] && currentMessages.length > 0
-                    ? 'bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300 hover:bg-amber-200 dark:hover:bg-amber-800'
-                    : 'bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-200 dark:hover:bg-indigo-800'
-                }`}
-              >
-                {stageResults[currentStage] && currentMessages.length > 0 && (
-                  <span className="text-xs">⚠️</span>
-                )}
-                <span>{currentMessages.length > 0 ? '总结并进入下一阶段' : '下一阶段'}</span>
+                        className="px-3 py-2 bg-indigo-500 text-white rounded-lg text-sm transition-colors flex items-center space-x-1 disabled:opacity-50 hover:bg-indigo-600"
+                      >
+                        <span>总结并进入下一阶段</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => goToNextStage(false)}
+                        disabled={isGeneratingSummary}
+                        className="px-3 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded-lg text-sm transition-colors flex items-center space-x-1 disabled:opacity-50 hover:bg-slate-200 dark:hover:bg-slate-600"
+                      >
+                        <span>直接进入下一阶段</span>
+                        <ChevronRight className="w-4 h-4" />
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => goToNextStage(false)}
+                      disabled={isGeneratingSummary}
+                      className="px-3 py-2 bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 rounded-lg text-sm transition-colors flex items-center space-x-1 disabled:opacity-50 hover:bg-indigo-200 dark:hover:bg-indigo-800"
+                    >
+                      <span>下一阶段</span>
                 <ChevronRight className="w-4 h-4" />
               </button>
+                  )}
+                </>
             )}
           </div>
 
-          {currentStage === 7 && (
+            {currentStage === 8 && (
             <button
-              onClick={() => setShowExport(true)}
+                onClick={handleExportClick}
               className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors flex items-center space-x-2"
             >
               <Download className="w-4 h-4" />
               <span>导出角色卡</span>
             </button>
           )}
+          </div>
         </div>
 
         {/* 提示信息 */}
@@ -1139,19 +2284,20 @@ export default function StageFlow() {
                 点击下一阶段时会<strong>清空后续阶段的对话</strong>（因为前面修改可能让后续内容不再适用）
               </span>
             )}
-            {currentMessages.length > 0 && currentStage < 7 && !stageResults[currentStage] && (
+            {currentMessages.length > 0 && currentStage < 8 && !stageResults[currentStage] && (
               <span>
                 点击"总结并进入下一阶段"时，AI会自动提取本阶段确定的内容，
                 <strong>只传递精炼的结论</strong>给下一阶段，避免混淆。
               </span>
             )}
             {currentMessages.length === 0 && stageResults.length === 0 && '开始创作吧！您可以随时返回上一阶段修改内容。'}
-            {currentMessages.length === 0 && stageResults.length > 0 && currentStage < 7 && (
+            {currentMessages.length === 0 && stageResults.length > 0 && currentStage < 8 && (
               <span>
                 本阶段尚未开始，您可以基于之前的设定继续创作，或返回上一阶段修改。
               </span>
             )}
-            {currentStage === 7 && '检查完成后点击"导出角色卡"保存您的作品'}
+            {currentStage === 7 && '质量检查阶段：检查所有内容是否完善'}
+            {currentStage === 8 && '检查完成后点击"导出角色卡"保存您的作品'}
           </div>
         </div>
       </div>

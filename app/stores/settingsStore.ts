@@ -95,7 +95,7 @@ const defaultSettings: AISettings = {
   apiKey: '',
   model: 'gpt-4',
   temperature: 0.8,
-  maxTokens: 8000, // 按次收费：设置更大值，一次生成更详细的内容
+  maxTokens: 16000, // 增大到16000，确保阶段9能输出完整的【完整描述】（12000-15000字需要约20000 tokens）
   customSystemPrompt: '', // 默认为空，用户需要自己填写
   useCustomPrompt: false, // 默认使用内置的 Psyche 提示词（不对外暴露）
 };

@@ -46,6 +46,12 @@
       "!**/node_modules/*.d.ts",
       "!**/node_modules/.bin"
     ],
+    "asarUnpack": [
+      "**/.next/**/*",
+      "**/node_modules/next/**/*",
+      "**/node_modules/@next/**/*",
+      "**/node_modules/sharp/**/*"
+    ],
     "win": {
       "target": [
         {

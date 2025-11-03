@@ -52,25 +52,22 @@ function startNextServer() {
       cwd: __dirname,
     });
   } else {
-    // 生产模式：使用 Node.js 可执行文件路径
-    const isWin = process.platform === 'win32';
-    const nodeExe = isWin ? 'node.exe' : 'node';
-    const nodePath = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '.bin', nodeExe);
+    // 生产模式：从 asar.unpacked 中运行
+    // 在打包后，关键文件会在 app.asar.unpacked 目录
+    const appPath = path.join(process.resourcesPath, 'app.asar.unpacked');
+    const nextBinPath = path.join(appPath, 'node_modules', 'next', 'dist', 'bin', 'next');
     
-    // 尝试不同的路径
-    let nextBin;
-    if (require('fs').existsSync(nodePath)) {
-      nextBin = nodePath;
-    } else {
-      // 使用系统 node（如果存在）
-      nextBin = 'node';
-    }
+    console.log('Production mode detected');
+    console.log('App path:', appPath);
+    console.log('Next.js binary:', nextBinPath);
     
-    const nextScript = path.join(__dirname, 'node_modules', 'next', 'dist', 'bin', 'next');
-    
-    nextServer = spawn(nextBin, [nextScript, 'start'], {
-      cwd: __dirname,
-      env: { ...process.env, PORT: '3000' },
+    nextServer = spawn(process.execPath, [nextBinPath, 'start'], {
+      cwd: appPath,
+      env: { 
+        ...process.env, 
+        PORT: '3000',
+        NODE_ENV: 'production'
+      },
       stdio: 'pipe',
       windowsHide: true
     });

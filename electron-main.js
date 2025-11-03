@@ -21,10 +21,9 @@ function createWindow() {
     title: '角色卡设计器 - Character Card Designer',
   });
 
-  // 开发环境：等待 Next.js 启动
+  // 等待服务器启动
   const startURL = 'http://localhost:3000';
   
-  // 等待服务器启动
   const waitForServer = () => {
     const http = require('http');
     http.get(startURL, () => {
@@ -53,20 +52,43 @@ function startNextServer() {
       cwd: __dirname,
     });
   } else {
-    // 生产模式：使用 npm start
-    nextServer = spawn('npm', ['start'], {
-      shell: true,
+    // 生产模式：使用 Node.js 可执行文件路径
+    const isWin = process.platform === 'win32';
+    const nodeExe = isWin ? 'node.exe' : 'node';
+    const nodePath = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', '.bin', nodeExe);
+    
+    // 尝试不同的路径
+    let nextBin;
+    if (require('fs').existsSync(nodePath)) {
+      nextBin = nodePath;
+    } else {
+      // 使用系统 node（如果存在）
+      nextBin = 'node';
+    }
+    
+    const nextScript = path.join(__dirname, 'node_modules', 'next', 'dist', 'bin', 'next');
+    
+    nextServer = spawn(nextBin, [nextScript, 'start'], {
       cwd: __dirname,
+      env: { ...process.env, PORT: '3000' },
+      stdio: 'pipe',
+      windowsHide: true
     });
   }
 
-  nextServer.stdout.on('data', (data) => {
-    console.log(`Next.js: ${data}`);
-  });
+  if (nextServer) {
+    nextServer.stdout.on('data', (data) => {
+      console.log(`Next.js: ${data}`);
+    });
 
-  nextServer.stderr.on('data', (data) => {
-    console.error(`Next.js Error: ${data}`);
-  });
+    nextServer.stderr.on('data', (data) => {
+      console.error(`Next.js Error: ${data}`);
+    });
+
+    nextServer.on('error', (err) => {
+      console.error('Failed to start Next.js:', err);
+    });
+  }
 }
 
 // 应用准备好时

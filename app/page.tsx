@@ -4,7 +4,10 @@ import { useState } from 'react';
 import { Settings, FileText, Sparkles, Menu, X } from 'lucide-react';
 import SettingsPanel from '@/components/SettingsPanel';
 import CharacterEditor from '@/components/CharacterEditor';
-import StageFlow from '@/components/StageFlow';
+import dynamic from 'next/dynamic';
+const StageFlow = dynamic(() => import('@/components/StageFlow'), {
+  ssr: false,
+});
 
 export default function Home() {
   const [showSettings, setShowSettings] = useState(false);

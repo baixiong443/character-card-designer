@@ -1,5 +1,3 @@
-'use client';
-
 import { useState } from 'react';
 import { Sparkles, Send, Loader, Download, ChevronLeft, ChevronRight, CheckCircle, FileUp, FileJson, RefreshCw, AlertCircle, X, Plus, Save, Trash2 } from 'lucide-react';
 import { useAIService } from '@/services/aiService';
@@ -739,14 +737,14 @@ C. 灵活切换（用户可以扮演这个角色，也可以旁观）"
 
 A. **标准格式**：直接对话和动作描写
    示例："我...我不是故意的！"他/她的表情显得有些紧张。
-   
+
 B. **状态栏格式**（推荐用于详细RP、身体特征丰富的角色）：
    情绪：[角色当前情绪]
    身体状态：[身体反应、特殊特征的状态]
    环境：[场景、天气、氛围]
-   
+
    然后是角色的对话和动作...
-   
+
    ⚠️ 优势：AI会从首条消息学习这个格式，并通过正向循环自然延续，无需额外设置
 
 请用户选择后，再创作：
@@ -775,12 +773,12 @@ B. **状态栏格式**（推荐用于详细RP、身体特征丰富的角色）�
 **人物相关**：
 - ⭐ 特别关注阶段3（关系网络）！
 - 主角的详细信息（核心角色条目）
-- 配角/NPC（如暗恋对象、朋友、导师）
+- 配角/NPC（如：重要配角、互动对象等）
 - 互动对象的性格、外貌、关系
 
 **环境相关**：
-- 地点（孤儿院、学校、城市、特殊场所）
-- 组织/团体（学生会、帮派、家族）
+- 地点（如：居住地、学校、城市、特殊场所等）
+- 组织/团体（如：学生会、帮派、家族等）
 - 历史事件（重要的过去事件）
 
 **设定相关**：
@@ -799,19 +797,29 @@ B. **状态栏格式**（推荐用于详细RP、身体特征丰富的角色）�
 
 ### 第三步：主动建议
 
-基于已有设定，建议创建的条目：
+**⚠️ 关键要求：必须使用前6个阶段实际提到的名称，不要编造或使用固定示例！**
 
-**示例**（根据实际情况调整）：
+分析前6个阶段的内容后，按以下格式建议创建条目：
+
+**输出格式**：
 "根据你的设定，我建议创建以下世界书条目：
 
-1. **核心角色：铁** - 主角的完整信息（外貌、性格、背景）
-2. **配角：白熊** - 暗恋对象的信息（从阶段3提取）
-3. **地点：阳光之家孤儿院** - 主要活动场所
-4. **事件：海边之夜** - 重要的过去事件
-5. **兽人特征：信息素系统** - Furry设定的规则
+📍 **地点**（如有）：
+- {从阶段6/7实际提取的地点名}（{简短描述}）
 
-你可以在下方点击"✨ AI生成世界书"按钮，让专用AI根据前6个阶段的内容自动生成这些条目。
-生成后你可以预览、选择和编辑。"
+👥 **人物**：
+- {从阶段1提取的主角名}（主角，核心角色）
+- {从阶段3提取的配角名}（{从阶段3提取的关系，如：朋友/暗恋对象/导师}）
+
+🎭 **事件**（如有）：
+- {从阶段2提取的事件名}（{简短描述}）
+
+🎯 **特殊设定**（如适用）：
+- {物种设定/魔法系统/战斗机制}（{规则说明}）
+
+你可以在下方点击'✨ AI生成世界书'按钮，让专用AI根据前6个阶段的内容自动生成这些条目。"
+
+⚠️ {花括号}内容必须替换为实际提取的内容，不要保留花括号！
 
 ### 第四步：解释价值
 
@@ -834,29 +842,38 @@ B. **状态栏格式**（推荐用于详细RP、身体特征丰富的角色）�
 - 不要生成过于宽泛的建议（要具体到角色名、地点名）
 - 不要遗漏阶段3的配角/NPC
 
-## 你的回复示例
+## 你的回复格式
 
-"让我分析一下前面的设定，看看需要创建哪些世界书条目...
+**第一句**：
+"让我分析一下前面的设定，看看需要创建哪些世界书条目..."
 
-根据你的角色，我建议创建以下条目：
+**然后分析前6个阶段，提取实际内容**：
+- 从阶段1提取主角名称、物种
+- 从阶段3提取所有配角和关系
+- 从阶段2/6/7提取地点、事件
+- 识别特殊设定类型（Furry/RPG/魔法等）
 
-📍 **地点**：
-- 阳光之家孤儿院（主要活动场所）
+**输出建议（严格使用实际提取的内容）**：
+"根据你的设定，我建议创建以下条目：
+
+📍 **地点**（如有）：
+- {实际的地点名}（{功能/描述}）
 
 👥 **人物**：
-- 铁（主角，核心角色）
-- 白熊（配角，暗恋对象，从阶段3提取）
+- {实际的主角名}（主角，核心角色）
+- {实际的配角名}（{实际的关系}，从阶段3提取）
 
-🎭 **事件**：
-- 海边之夜（重要背景事件）
+🎭 **事件**（如有）：
+- {实际的事件名}（{简短描述}）
 
-🐾 **Furry设定**（如适用）：
-- 信息素系统（兽人的气味机制）
-- 兽人特征（耳朵、尾巴的情绪表达）
+🎯 **特殊设定**（根据实际情况）：
+- {实际的设定类型}（{规则说明}）
 
-你可以点击下方的"✨ AI生成世界书"按钮，让AI根据前6个阶段的内容自动生成这些条目。生成后你可以预览并选择需要的条目。
+你可以点击下方的'✨ AI生成世界书'按钮，让AI根据前6个阶段的内容自动生成这些条目。生成后你可以预览并选择需要的条目。
 
-或者你想先讨论其他方面的世界观？"`,
+或者你想先讨论其他方面的世界观？"
+
+⚠️ **严禁**：不要使用任何固定的示例名称（如"铁"、"白熊"、"孤儿院"等），必须从前6个阶段的实际内容中提取！`,
 
   `【阶段7：质量检查】
 回顾完整的角色设定。请检查：
@@ -902,37 +919,37 @@ B. **状态栏格式**（推荐用于详细RP、身体特征丰富的角色）�
 - 阶段1-5的所有文字、所有条目、所有段落都要搬过来
 - 不要挑"重要的"写，要把"所有的"都写
 - 目标字数：10000-15000字（这是合理的，因为你在搬运5个阶段的内容）
-   
+
    **⚠️ 你的任务：识别内容 → 分类到对应标题下 → 原样转移**
-   
+
    **从阶段1提取并分类**（必须包含）：
    * 识别主角的所有详细信息 → 原样转移到【基本信息（主角）】
    * ⭐ 识别角色2（用户扮演角色）的完整档案 → 原样转移到【关系网络】
    * 识别次要角色的信息 → 原样转移到【关系网络】
    * 如果有主角团的信息 → 原样转移到【关系网络】
    * 💬 对话补充部分（如果有）→ 原样转移到对应位置
-   
+
    **从阶段2提取并分类**（必须包含）：
    * 识别主角背景的内容 → 原样转移到【深度背景与动机】
    * 识别**人际关系网络**的内容 → 原样转移到【关系网络】
    * 💬 对话补充部分（如果有）→ 原样转移到对应位置
-   
+
    **从阶段3提取并分类**（必须包含）：
    * 识别所有角色的关系网络 → 原样转移到【关系网络】
    * 识别每个重要角色的档案 → 原样转移到【关系网络】对应角色下
    * 💬 对话补充部分（如果有）→ 原样转移到对应位置
-   
+
    **从阶段4提取并分类**（必须包含）：
    * 识别主角的所有物理描写 → 原样转移到【外貌与物理特征】
    * 识别配角的物理描写（如果有）→ 原样转移到【关系网络】对应角色下
    * 💬 对话补充部分（如果有）→ 原样转移到对应位置
-   
+
    **从阶段5提取并分类**（必须包含，这是关键！）：
    * ⭐ 识别阶段5的所有内容 → 原样转移到【专项深化】
    * ⭐ 保持原文的所有格式、结构、层级、段落、缩进
    * ⭐ 如果阶段5包含主角的专项深化 → 原样转移
    * ⭐ 如果阶段5包含配角的专项深化 → 原样转移到【关系网络】对应角色下或【专项深化】独立段落
-   
+
    **组织方式**：
    - 使用清晰的大标题分隔不同阶段（如 #### **基本信息**、#### **深度背景**、#### **关系网络**、#### **外貌特征**、#### **专项深化**）
    - **保持原文的所有格式**：标题、子标题、列表（- 或 *）、段落、缩进等
@@ -1010,10 +1027,10 @@ B. **状态栏格式**（推荐用于详细RP、身体特征丰富的角色）�
 1. **第一步：识别内容**
    - 阅读阶段1-5的所有内容
    - 识别哪些内容属于"基本信息"、"背景"、"关系"、"外貌"、"专项"
-   
+
 2. **第二步：添加分类标题**
    - 为【完整描述】添加大标题：#### **基本信息**、#### **深度背景**、#### **关系网络**、#### **外貌特征**、#### **专项深化**
-   
+
 3. **第三步：逐句复制内容（最重要！）**
    - 把识别出的内容**逐句、逐条、逐字复制**到对应大标题下
    - ⚠️ **不要筛选**：如果原文有10条细节，你必须写10条，不能只写3-5条！
@@ -1150,7 +1167,7 @@ const STAGE9_STEP_PROMPTS = [
 1. **识别内容的两个来源**：
    - **导入内容**：小说AI的分析（通常在前面部分）
    - **💬 对话补充**：用户后续讨论补充的信息（通常标记为"💬 **对话补充：**"）
-   
+
 2. **对同一角色的信息进行"完整融合"**（最重要！）：
    - ✅ **融合策略**：
      * 如果导入内容和对话补充都有该角色，识别为同一角色
@@ -1418,31 +1435,31 @@ export default function StageFlow() {
     createProject,
     hasSavedProgress,
   } = useProgressStore();
-  
+
   const currentProject = getCurrentProject();
   const stageResults = currentProject?.stageResults || [];
   const currentStage = currentProject?.currentStage || 0;
   const stageMessages = currentProject?.stageMessages || [[], [], [], [], [], [], [], [], []];
   const selectedSpecialty = currentProject?.selectedSpecialty || null;
   const lastSaved = currentProject?.lastSaved || null;
-  
+
   const [userInput, setUserInput] = useState('');
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [showSpecialtySelection, setShowSpecialtySelection] = useState(false);
-  
+
   const [showExport, setShowExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [showImportCard, setShowImportCard] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
-  
+
   // 阶段9：累积式填充内容
   const [stage9AccumulatedContent, setStage9AccumulatedContent] = useState('【完整描述】\n\n');
   const [stage9Step, setStage9Step] = useState(0); // 当前进行到第几步（0-6）
   const [showStage9Editor, setShowStage9Editor] = useState(false); // 是否显示文本编辑器
-  
+
   const { generateResponse, loading } = useAIService();
   const { parseFromStageResults } = useCharacterStore();
-  
+
   // 处理导出按钮点击：自动解析stageResults到character
   const handleExportClick = () => {
     // ⚠️ 特殊处理阶段9：如果阶段9有AI对话但没有总结，将最后一条AI回复作为stageResults[8]
@@ -1457,15 +1474,27 @@ export default function StageFlow() {
         updateProgress({ stageResults: finalStageResults });
       }
     }
-    
+
     parseFromStageResults(finalStageResults);
     setShowExport(true);
   };
 
   // 处理导入完成（文本分析或角色卡）
   const handleImportComplete = (importedResults: string[]) => {
+    // 检查是否有剧情轨迹数据（存储在 results[9]）
+    const plotTrajectory = importedResults[9];
+    if (plotTrajectory && plotTrajectory.trim()) {
+      // 将剧情轨迹写入 characterStore 的 creator_notes
+      const { updateField } = useCharacterStore.getState();
+      updateField('creator_notes', plotTrajectory);
+      console.log('📖 剧情轨迹已写入 creator_notes');
+    }
+
+    // 只保留前9个阶段的结果（0-8），剧情轨迹已单独处理
+    const stageResultsOnly = importedResults.slice(0, 9);
+
     updateProgress({
-      stageResults: importedResults,
+      stageResults: stageResultsOnly,
       currentStage: 0,
     });
   };
@@ -1477,7 +1506,7 @@ export default function StageFlow() {
 
     const newMessage = { role: 'user', content: userInput };
     const updatedMessages = [...currentMessages, newMessage];
-    
+
     // 更新当前阶段的消息
     const newStageMessages = [...stageMessages];
     newStageMessages[currentStage] = updatedMessages;
@@ -1514,14 +1543,14 @@ export default function StageFlow() {
         // 其他情况：使用标准阶段提示词
         stagePrompt = STAGE_PROMPTS[currentStage];
       }
-      
+
       const response = await generateResponse(
         contextForAI,
         stagePrompt
       );
-      
+
       newStageMessages[currentStage] = [...updatedMessages, { role: 'assistant', content: response }];
-      
+
       // ⚠️ 特殊处理：如果是阶段9，并且AI回复包含结构化数据标记，自动保存到stageResults
       if (currentStage === 8 && (response.includes('【角色名】') || response.includes('【完整描述】'))) {
         const newResults = [...stageResults];
@@ -1538,16 +1567,16 @@ export default function StageFlow() {
             newResults[8] = response;
           }
         }
-        updateProgress({ 
+        updateProgress({
           stageMessages: newStageMessages,
-          stageResults: newResults 
+          stageResults: newResults
         });
       } else {
         updateProgress({ stageMessages: newStageMessages });
       }
     } catch (error: any) {
       console.error('AI 响应失败:', error);
-      
+
       // 提取详细错误信息
       let errorDetail = 'AI 响应失败';
       if (error?.response?.data?.error) {
@@ -1557,12 +1586,12 @@ export default function StageFlow() {
       } else if (typeof error === 'string') {
         errorDetail = error;
       }
-      
+
       setErrorMessage(errorDetail);
-      
-      newStageMessages[currentStage] = [...updatedMessages, { 
-        role: 'assistant', 
-        content: `❌ ${errorDetail}\n\n请检查：\n- API密钥是否正确\n- 网络连接是否正常\n- API服务是否可用\n- 请求是否超出配额限制` 
+
+      newStageMessages[currentStage] = [...updatedMessages, {
+        role: 'assistant',
+        content: `❌ ${errorDetail}\n\n请检查：\n- API密钥是否正确\n- 网络连接是否正常\n- API服务是否可用\n- 请求是否超出配额限制`
       }];
       updateProgress({ stageMessages: newStageMessages });
     }
@@ -1571,17 +1600,17 @@ export default function StageFlow() {
   // 重新生成最后一条AI回复
   const handleRegenerate = async (messageIndex: number) => {
     if (loading || messageIndex < 1) return;
-    
+
     setErrorMessage('');
-    
+
     // 获取到该消息之前的所有消息（不包括要重新生成的AI消息）
     const messagesUpToUser = currentMessages.slice(0, messageIndex);
-    
+
     // 更新消息历史，移除要重新生成的AI消息
     const newStageMessages = [...stageMessages];
     newStageMessages[currentStage] = messagesUpToUser;
     updateProgress({ stageMessages: newStageMessages });
-    
+
     try {
       // 构建上下文
       const contextForAI = [
@@ -1595,7 +1624,7 @@ export default function StageFlow() {
         }] : []),
         ...messagesUpToUser
       ];
-      
+
       // 选择合适的提示词
       let stagePrompt;
       // 检查最后一条用户消息是否为第2步指令
@@ -1607,15 +1636,15 @@ export default function StageFlow() {
       } else {
         stagePrompt = STAGE_PROMPTS[currentStage];
       }
-      
+
       const response = await generateResponse(contextForAI, stagePrompt);
-      
+
       // 添加新的AI回复
       newStageMessages[currentStage] = [
         ...messagesUpToUser,
         { role: 'assistant', content: response }
       ];
-      
+
       // ⚠️ 特殊处理：如果是阶段9，并且AI回复包含结构化数据标记，自动保存到stageResults
       if (currentStage === 8 && (response.includes('【角色名】') || response.includes('【完整描述】'))) {
         const newResults = [...stageResults];
@@ -1630,26 +1659,26 @@ export default function StageFlow() {
             newResults[8] = response;
           }
         }
-        updateProgress({ 
+        updateProgress({
           stageMessages: newStageMessages,
-          stageResults: newResults 
+          stageResults: newResults
         });
       } else {
         updateProgress({ stageMessages: newStageMessages });
       }
-      
+
     } catch (error: any) {
       console.error('重新生成失败:', error);
-      
+
       let errorDetail = '重新生成失败';
       if (error?.response?.data?.error) {
         errorDetail = `API错误: ${error.response.data.error.message || error.response.data.error}`;
       } else if (error?.message) {
         errorDetail = `错误: ${error.message}`;
       }
-      
+
       setErrorMessage(errorDetail);
-      
+
       // 显示错误消息
       newStageMessages[currentStage] = [
         ...messagesUpToUser,
@@ -1661,7 +1690,7 @@ export default function StageFlow() {
 
   const goToNextStage = async (shouldSummarize: boolean = false) => {
     if (currentStage >= 8) return; // 9个阶段（0-8），阶段9是导出
-    
+
     // 如果用户选择生成总结
     if (shouldSummarize && currentMessages.length > 0 && currentStage < 8) {
       setIsGeneratingSummary(true);
@@ -1676,23 +1705,23 @@ export default function StageFlow() {
             content: `请总结一下我们刚才确定的内容。${SUMMARY_PROMPTS[currentStage]}`
           }
         ];
-        
+
         const summary = await generateResponse(
           summaryRequest,
           undefined // 不传summarySystemPrompt，使用默认的DEFAULT_PSYCHE_PROMPT
         );
-        
+
         // 保存总结
         const newResults = [...stageResults];
         const hadPreviousContent = !!stageResults[currentStage]; // 记录是否有旧内容
-        
+
         // 如果当前阶段已有内容（导入的），将对话补充追加到后面，而不是覆盖
         if (stageResults[currentStage]) {
           newResults[currentStage] = stageResults[currentStage] + '\n\n---\n\n💬 **对话补充：**\n' + summary;
         } else {
         newResults[currentStage] = summary;
         }
-        
+
         // 检查：如果是首次创建内容（之前没有），不清空后续阶段
         // 如果是修改已有内容，清空后续有对话历史的阶段
         if (hadPreviousContent) {
@@ -1706,8 +1735,8 @@ export default function StageFlow() {
             }
             // 如果没有对话历史，说明是导入的，保留它
           }
-          
-          updateProgress({ 
+
+          updateProgress({
             stageResults: newResults,
             stageMessages: newStageMessages,
           });
@@ -1723,7 +1752,7 @@ export default function StageFlow() {
       }
       setIsGeneratingSummary(false);
     }
-    
+
     // 特殊处理：从阶段4（物理描写）进入阶段5（专项深化）时，显示专项选择界面
     if (currentStage === 3) {
       setShowSpecialtySelection(true);
@@ -1741,7 +1770,7 @@ export default function StageFlow() {
   // 处理专项类型选择
   const handleSpecialtySelection = (specialtyId: string) => {
     setShowSpecialtySelection(false);
-    updateProgress({ 
+    updateProgress({
       selectedSpecialty: specialtyId,
       currentStage: 4, // 进入阶段5（专项深化）
     });
@@ -1752,7 +1781,7 @@ export default function StageFlow() {
     setShowSpecialtySelection(false);
     const newResults = [...stageResults];
     newResults[4] = '【用户选择跳过专项深化】';
-    updateProgress({ 
+    updateProgress({
       stageResults: newResults,
       currentStage: 5, // 跳过阶段5（专项深化），直接到阶段6（互动设计）
     });
@@ -1761,20 +1790,20 @@ export default function StageFlow() {
   // 阶段9：分步生成（连续对话模式）
   const handleStage9StepGenerate = async (step: number) => {
     if (currentStage !== 8 || loading) return;
-    
+
     setErrorMessage('');
-    
+
     try {
       const newStageMessages = [...stageMessages];
       const currentStage9Messages = stageMessages[8] || [];
-      
+
       // 1. 添加用户消息（当前步骤的指令）
       const userMessage = { role: 'user' as const, content: STAGE9_STEP_PROMPTS[step] };
       const updatedMessages = [...currentStage9Messages, userMessage];
-      
+
       // 2. 构建上下文：只给当前步骤需要的阶段内容 + 对话历史
       let contextForAI: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
-      
+
       if (step < 8) {
         // 第1-8步：只给对应阶段的内容
         if (stageResults[step]) {
@@ -1804,22 +1833,22 @@ export default function StageFlow() {
           });
         }
       }
-      
+
       // 添加阶段9的对话历史（包含刚添加的用户消息）
       contextForAI.push(...updatedMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>);
-      
+
       // 3. 调用AI（AI通过对话历史记住之前步骤的处理结果）
       const response = await generateResponse(contextForAI, STAGE9_STEP_PROMPTS[step]);
-      
+
       // 4. 保存AI回复到对话历史
       newStageMessages[8] = [...updatedMessages, { role: 'assistant', content: response }];
       updateProgress({ stageMessages: newStageMessages });
-      
+
       // 5. 追加到累积内容（简单追加，后面再优化格式）
       const newContent = stage9AccumulatedContent + response + '\n\n';
       setStage9AccumulatedContent(newContent);
       setStage9Step(step + 1);
-      
+
     } catch (error: any) {
       console.error('阶段9分步生成失败:', error);
       let errorDetail = 'AI 响应失败';
@@ -1837,24 +1866,24 @@ export default function StageFlow() {
   // 阶段9：保存到角色卡
   const handleSaveToCard = () => {
     if (currentStage !== 8) return;
-    
+
     const newResults = [...stageResults];
     newResults[8] = stage9AccumulatedContent;
     updateProgress({ stageResults: newResults });
-    
+
     alert('✅ 已保存到角色卡！\n\n现在可以点击"导出角色卡"按钮导出JSON文件。');
   };
 
   // 删除消息
   const handleDeleteMessage = (messageIndex: number) => {
     if (loading || isGeneratingSummary) return;
-    
+
     const currentMessages = stageMessages[currentStage] || [];
     const newMessages = currentMessages.filter((_, idx) => idx !== messageIndex);
-    
+
     const newStageMessages = [...stageMessages];
     newStageMessages[currentStage] = newMessages;
-    
+
     updateProgress({ stageMessages: newStageMessages });
   };
 
@@ -1960,7 +1989,7 @@ export default function StageFlow() {
           const parts = content.split('\n\n---\n\n💬 **对话补充：**\n');
           const importedContent = parts[0];
           const dialogSupplement = parts[1];
-          
+
           return (
             <div className="bg-green-50 dark:bg-green-900/20 rounded-lg p-4 border-2 border-green-200 dark:border-green-800">
               <div className="flex items-center space-x-2 text-green-700 dark:text-green-300 mb-2">
@@ -1969,7 +1998,7 @@ export default function StageFlow() {
                   ✅ 当前阶段已有内容
                 </div>
               </div>
-              
+
               {/* 导入的内容 - 蓝色 */}
               {importedContent && (
                 <div className="text-sm text-blue-700 dark:text-blue-300 bg-blue-50/50 dark:bg-blue-900/20 rounded p-3 whitespace-pre-wrap mb-3 border-l-4 border-blue-400">
@@ -1977,7 +2006,7 @@ export default function StageFlow() {
                   {importedContent}
                 </div>
               )}
-              
+
               {/* 对话补充 - 绿色 */}
               {dialogSupplement && (
                 <div className="text-sm text-green-700 dark:text-green-300 bg-green-50/50 dark:bg-green-900/20 rounded p-3 whitespace-pre-wrap border-l-4 border-green-400">
@@ -1985,7 +2014,7 @@ export default function StageFlow() {
                   {dialogSupplement}
                 </div>
               )}
-              
+
               <div className="mt-2 text-xs text-green-600 dark:text-green-400">
                 💡 AI 已知道这些信息，您可以在此基础上继续完善和提问
               </div>
@@ -2000,7 +2029,7 @@ export default function StageFlow() {
             <p className="text-sm">在下方输入您的想法开始创作</p>
           </div>
         )}
-        
+
         {currentMessages.map((msg, idx) => (
           <div
             key={idx}
@@ -2016,7 +2045,7 @@ export default function StageFlow() {
             >
               <div className="whitespace-pre-wrap">{msg.content}</div>
               </div>
-              
+
               {/* 操作按钮 */}
               <div className="flex items-start space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
                 {/* 重新生成按钮 - 只对最后一条AI消息显示 */}
@@ -2029,7 +2058,7 @@ export default function StageFlow() {
                     <RefreshCw className="w-4 h-4 text-slate-600 dark:text-slate-400" />
                   </button>
                 )}
-                
+
                 {/* 删除按钮 - 对所有消息显示 */}
                 {!loading && !isGeneratingSummary && (
                   <button
@@ -2048,7 +2077,7 @@ export default function StageFlow() {
             </div>
           </div>
         ))}
-        
+
         {(loading || isGeneratingSummary) && (
           <div className="flex justify-start">
             <div className="bg-slate-100 dark:bg-slate-700 px-4 py-2 rounded-lg flex items-center space-x-2">
@@ -2063,13 +2092,13 @@ export default function StageFlow() {
         {/* 阶段7：世界整合 - 显示世界书编辑器 */}
         {currentStage === 6 && (
           <div className="mt-6">
-            <WorldBookEditor 
-              stageResults={stageResults} 
+            <WorldBookEditor
+              stageResults={stageResults}
               currentStageMessages={currentMessages}
             />
           </div>
         )}
-        
+
         {/* 阶段9：可折叠的文本编辑器 */}
         {currentStage === 8 && showStage9Editor && (
           <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-lg border-2 border-purple-300 dark:border-purple-700">
@@ -2120,7 +2149,7 @@ export default function StageFlow() {
             </button>
           </div>
         )}
-        
+
         <div className="flex space-x-2 mb-2">
           <input
             type="text"
@@ -2175,7 +2204,7 @@ export default function StageFlow() {
                     {label}
                   </button>
                 ))}
-                
+
                 <button
                   onClick={() => setShowStage9Editor(!showStage9Editor)}
                   className="px-2 py-1 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 transition-colors"
@@ -2183,7 +2212,7 @@ export default function StageFlow() {
                 >
                   {showStage9Editor ? '隐藏编辑器' : '查看内容'}
                 </button>
-                
+
                 <button
                   onClick={handleSaveToCard}
                   disabled={stage9Step === 0}
@@ -2193,7 +2222,7 @@ export default function StageFlow() {
                   <Save className="w-3 h-3" />
                   <span>保存</span>
                 </button>
-                
+
                 <button
                   onClick={() => {
                     if (confirm('确定要重置吗？')) {
@@ -2212,7 +2241,7 @@ export default function StageFlow() {
               </div>
             </div>
           )}
-          
+
         <div className="flex items-center justify-between gap-2">
           <div className="flex gap-2">
             {currentStage > 0 && (
@@ -2304,7 +2333,7 @@ export default function StageFlow() {
 
       {/* 导出对话框 */}
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
-      
+
       {/* 导入文本对话框 */}
       {showImport && (
         <ImportTextDialog
@@ -2312,7 +2341,7 @@ export default function StageFlow() {
           onImportComplete={handleImportComplete}
         />
       )}
-      
+
       {/* 导入角色卡对话框 */}
       {showImportCard && (
         <ImportCardDialog
@@ -2381,7 +2410,7 @@ export default function StageFlow() {
               {/* 说明 */}
               <div className="mt-6 p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg">
                 <p className="text-sm text-amber-700 dark:text-amber-300">
-                  <strong>💡 提示：</strong> 
+                  <strong>💡 提示：</strong>
                   选择后，将进入对应的专项深化阶段。如果不需要特殊深化，可以点击右上角的"跳过此阶段"按钮直接进入互动设计。
                   您可以随时返回上一阶段重新选择。
                 </p>

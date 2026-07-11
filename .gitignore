@@ -13,6 +13,8 @@ node_modules/
 # Production
 /build
 /dist
+/dist-new/
+/dist-fixed/
 
 # Misc
 .DS_Store
@@ -48,3 +50,5 @@ Thumbs.db
 *.log
 temp/
 tmp/
+/resources/node/
+/import_check.txt

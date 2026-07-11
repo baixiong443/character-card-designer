@@ -3,7 +3,17 @@
   "version": "1.0.0",
   "main": "electron-main.js",
   "description": "角色卡设计器 - Professional AI-powered character card designer with 8-stage workflow, worldbook support, and multi-format export (JSON/PNG/Markdown).",
-  "keywords": ["character-card", "ai", "psyche", "furry", "sillytavern", "worldbook", "roleplay", "nextjs", "pwa"],
+  "keywords": [
+    "character-card",
+    "ai",
+    "psyche",
+    "furry",
+    "sillytavern",
+    "worldbook",
+    "roleplay",
+    "nextjs",
+    "pwa"
+  ],
   "author": "Psyche Card Designer Team",
   "license": "MIT",
   "repository": {
@@ -15,52 +25,81 @@
   },
   "homepage": "https://github.com/baixiong443/character-card-designer#readme",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node scripts/run-node-tool.cjs node_modules/next/dist/bin/next dev",
+    "build": "node scripts/run-node-tool.cjs node_modules/next/dist/bin/next build --webpack",
+    "start": "node scripts/run-node-tool.cjs node_modules/next/dist/bin/next start",
     "lint": "eslint",
     "electron": "electron .",
-    "electron-dev": "concurrently \"npm run dev\" \"wait-on http://localhost:3000 && electron .\"",
-    "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win --x64",
-    "dist:portable": "npm run build && electron-builder --win portable"
+    "electron-dev": "electron .",
+    "prepare:node": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare-bundled-node.ps1",
+    "pack": "npm run prepare:node && npm run build && node scripts/run-node-tool.cjs node_modules/electron-builder/out/cli/cli.js --dir",
+    "dist": "npm run prepare:node && npm run build && node scripts/run-node-tool.cjs node_modules/electron-builder/out/cli/cli.js",
+    "dist:win": "npm run prepare:node && npm run build && node scripts/run-node-tool.cjs node_modules/electron-builder/out/cli/cli.js --win --x64",
+    "dist:portable": "npm run prepare:node && npm run build && node scripts/run-node-tool.cjs node_modules/electron-builder/out/cli/cli.js --win portable"
   },
   "build": {
     "appId": "com.psyche.character-card-designer",
     "productName": "角色卡设计器",
+    "electronVersion": "28.1.0",
     "directories": {
       "buildResources": "public",
-      "output": "dist"
+      "output": "dist-fixed"
     },
     "files": [
       "electron-main.js",
-      ".next/**/*",
-      "app/**/*",
       "public/**/*",
-      "node_modules/**/*",
       "package.json",
-      "next.config.ts",
-      "!**/node_modules/*/{CHANGELOG.md,README.md,README,readme.md,readme}",
-      "!**/node_modules/*/{test,__tests__,tests,powered-test,example,examples}",
-      "!**/node_modules/*.d.ts",
-      "!**/node_modules/.bin"
+      "!**/node_modules/**/*"
     ],
-    "asarUnpack": [
-      "**/.next/**/*",
-      "**/node_modules/next/**/*",
-      "**/node_modules/@next/**/*",
-      "**/node_modules/sharp/**/*"
+    "extraResources": [
+      {
+        "from": "resources/node",
+        "to": "node",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": ".next/standalone",
+        "to": "server",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": ".next/static",
+        "to": "server/.next/static",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "public",
+        "to": "server/public",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "win": {
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "public/icon-512.png",
@@ -95,6 +134,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "baseline-browser-mapping": "^2.9.4",
     "concurrently": "^8.2.2",
     "electron": "^28.1.0",
     "electron-builder": "^24.9.1",

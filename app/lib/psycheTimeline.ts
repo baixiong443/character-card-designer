@@ -110,6 +110,12 @@ export interface StoryEvent {
   canonicalOrder: number;
   kind: EventKind;
   rigidity: EventRigidity;
+  /**
+   * `world` marks a world-scale process (disaster, war, plague, regime change)
+   * that PTE keeps alive even after the branch diverges from canon.
+   * Omitted means `interpersonal`.
+   */
+  scope?: 'world' | 'interpersonal';
   summary: string;
   participants: string[];
   preconditions?: JsonLogicRule;
@@ -488,13 +494,14 @@ function validateEvent(value: unknown, path: string, errors: string[]): void {
   checkKeys(event, path, [
     'id', 'chapterId', 'sceneId', 'canonicalOrder', 'kind', 'rigidity', 'summary',
     'participants', 'effects', 'narrativePurposes', 'evidenceRefs', 'revealPolicy', 'adaptation',
-  ], ['preconditions', 'forbiddenWhen'], errors);
+  ], ['preconditions', 'forbiddenWhen', 'scope'], errors);
   checkId(event.id, `${path}.id`, errors);
   checkString(event.chapterId, `${path}.chapterId`, errors);
   checkString(event.sceneId, `${path}.sceneId`, errors);
   checkNumber(event.canonicalOrder, `${path}.canonicalOrder`, errors, { integer: true, min: 0 });
   if (!['hard_anchor', 'soft_anchor', 'character_beat', 'transition', 'atmosphere', 'chance'].includes(String(event.kind))) errors.push(`${path}.kind 无效`);
   if (!['hard', 'soft', 'flexible'].includes(String(event.rigidity))) errors.push(`${path}.rigidity 无效`);
+  if (event.scope !== undefined && !['world', 'interpersonal'].includes(String(event.scope))) errors.push(`${path}.scope 无效`);
   checkString(event.summary, `${path}.summary`, errors);
   checkStringArray(event.participants, `${path}.participants`, errors, true);
   if (!Array.isArray(event.effects)) errors.push(`${path}.effects 必须是数组`);
@@ -769,6 +776,8 @@ export function buildPsycheTimelineCompilationPrompt(
     `- initialState 只能表示用户确认的故事起点。未来事件只进入 events，不能倒灌到角色记忆、关系、物品、事实或当前状态。\n` +
     `- initialState 必须完整包含 schemaVersion, storyId, turn, canonCursor, time, location, characters, relationships, inventory, facts, knowledge, flags, canonEvents, narrativePurposes, openThreads, custom, lockedPaths, divergence。没有证据的集合使用空对象或空数组，不得补写。\n` +
     `- 每个事件必须包含 id, chapterId, sceneId, canonicalOrder, kind, rigidity, summary, participants, effects, narrativePurposes, evidenceRefs, revealPolicy, adaptation。\n` +
+    `- 每个事件可选包含 scope：世界级进程（天灾、战争、瘟疫、政权更迭）标为 "world"；由角色行为与关系驱动的事件标为 "interpersonal" 或省略。\n` +
+    `- scope="world" 的事件在剧情分歧后仍会被 PTE 保留，所以它是否被阻止必须由真正的前因决定：把「堤坝已修复」「敌军已被歼灭」这类可验证条件写进 forbiddenWhen，不要依赖分歧度。\n` +
     `- 所有事件 ID 都要预先出现在 initialState.canonEvents；故事起点以后尚未到达的事件用 locked，起点处可发生的首个事件才可用 eligible。\n` +
     `- 所有 narrativePurposes 引用都要预先出现在 initialState.narrativePurposes，初始通常为 pending。\n` +
     `- participants 中的每个角色都要出现在 initialState.characters，即使当前不在场也以 present:false 登记。\n` +

@@ -169,6 +169,24 @@ test('PTE timeline validation rejects recursive canon transitions inside event e
   assert.match(invalid.errors.join('\n'), /不得直接改变原作事件状态/);
 });
 
+test('PTE timeline accepts world scope events and rejects unknown scope values', () => {
+  const state = makeTimelineState();
+
+  // Omitted scope stays valid and defaults to interpersonal on the PTE side.
+  assert.deepEqual(validatePsycheTimelineState(state).errors, []);
+
+  state.plan.events[0].scope = 'world';
+  assert.deepEqual(validatePsycheTimelineState(state).errors, []);
+
+  state.plan.events[0].scope = 'interpersonal';
+  assert.deepEqual(validatePsycheTimelineState(state).errors, []);
+
+  state.plan.events[0].scope = 'planetary';
+  const invalid = validatePsycheTimelineState(state);
+  assert.equal(invalid.valid, false);
+  assert.match(invalid.errors.join('\n'), /scope 无效/);
+});
+
 test('V3 export embeds an inline PTE plan without dropping vendor extensions', () => {
   const state = makeTimelineState();
   const source = {

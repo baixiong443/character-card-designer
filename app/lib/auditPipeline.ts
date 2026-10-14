@@ -15,6 +15,30 @@ export interface WorldBookAuditCandidate {
   issues: string[];
 }
 
+/**
+ * The subset of a PTE projection needed to reason about knowledge scoping.
+ *
+ * PTE injects a fact's *truth* to the responding character only when that
+ * character's knowledge state is one of `knows`, `suspects` or `hiding`
+ * (see `formatKnowledge` in the engine's injection module). `unaware` and
+ * `believes_false` receive something different, and a missing entry means the
+ * character was never told. A world book entry, by contrast, is injected by
+ * SillyTavern core on a keyword match and is not scoped to a speaker at all.
+ */
+export interface PrivateKnowledgeSource {
+  facts?: Record<string, { truth?: string; status?: string }>;
+  knowledge?: Record<string, Record<string, { state?: string } | undefined>>;
+  characters?: Record<string, unknown>;
+}
+
+const TRUTH_BEARING_STATES = new Set(['knows', 'suspects', 'hiding']);
+/** Below this many normalized characters a match is too weak to report. */
+const MIN_FACT_MATCH_LENGTH = 6;
+
+function normalizeForMatch(value: string): string {
+  return value.replace(/\s+/g, '').toLocaleLowerCase('zh-CN');
+}
+
 const BROAD_WORLD_BOOK_KEYS = new Set([
   '我', '你', '他', '她', '它', '的', '了', '是', '在', '有', '这', '那',
   '一个', '角色', '人物', '地点', '东西', '事件', '世界',
@@ -119,6 +143,88 @@ export function findWorldBookAuditFindings(entries: WorldBookEntry[]): WorldBook
   return findings;
 }
 
+/**
+ * Detect world book entries that publish a fact some character is not supposed
+ * to know.
+ *
+ * The check is deterministic, not heuristic. It only fires when both sides are
+ * known for certain:
+ *
+ * 1. the entry's content carries a fact's exact `truth` text from the compiled
+ *    timeline, and
+ * 2. at least one registered character does NOT have a truth-bearing knowledge
+ *    state for that fact.
+ *
+ * That combination proves a leak: PTE would withhold the fact from that
+ * character, but SillyTavern injects the world book entry on a keyword match
+ * with no speaker scoping, so the withheld truth reaches every responder.
+ *
+ * It deliberately stays silent when the timeline is absent, when a fact is
+ * unknown to *everyone* (nothing is proven private yet - the fact is more
+ * likely an objective world fact), or when the match is too short to be
+ * meaningful.
+ */
+export function findPrivateKnowledgeLeaks(
+  entries: WorldBookEntry[],
+  source: PrivateKnowledgeSource | null | undefined,
+  characters?: string[],
+): WorldBookAuditFinding[] {
+  if (!source?.facts) return [];
+  const knowledge = source.knowledge ?? {};
+  const registered = characters && characters.length > 0
+    ? characters
+    : Object.keys(knowledge);
+  if (registered.length === 0) return [];
+
+  const findings: WorldBookAuditFinding[] = [];
+  const normalizedContents = entries.map(entry => normalizeForMatch(entry.content));
+
+  for (const [factId, fact] of Object.entries(source.facts)) {
+    const truth = typeof fact?.truth === 'string' ? normalizeForMatch(fact.truth) : '';
+    if (truth.length < MIN_FACT_MATCH_LENGTH) continue;
+
+    // Characters PTE would *not* give this fact's truth to.
+    const withheldFrom = registered.filter(characterId => {
+      const state = knowledge[characterId]?.[factId]?.state;
+      return !TRUTH_BEARING_STATES.has(String(state));
+    });
+    // Private knowledge means "some know it, some do not". If nobody may know
+    // it, the fact is not proven private - it is more likely an objective world
+    // fact the author intends everyone to see - so stay silent.
+    if (withheldFrom.length === 0 || withheldFrom.length === registered.length) continue;
+
+    normalizedContents.forEach((content, index) => {
+      if (!content || !content.includes(truth)) return;
+      const entry = entries[index];
+      if (!entry) return;
+      findings.push(finding(
+        entry.uid,
+        'warning',
+        'private-knowledge-leak',
+        `条目内容包含事实“${factId}”的真相，但 ${withheldFrom.join('、')} 并不知晓它。`
+          + `世界书条目不区分发言角色，会对所有成员注入，可能绕过时间线的知识隔离。`,
+      ));
+    });
+  }
+
+  return findings;
+}
+
+/**
+ * Deterministic findings for one world book: structural rules plus, when a
+ * compiled timeline is supplied, private-knowledge leak detection.
+ */
+export function findWorldBookFindings(
+  entries: WorldBookEntry[],
+  source?: PrivateKnowledgeSource | null,
+  characters?: string[],
+): WorldBookAuditFinding[] {
+  return [
+    ...findWorldBookAuditFindings(entries),
+    ...findPrivateKnowledgeLeaks(entries, source, characters),
+  ];
+}
+
 function serializeWorldBookEntry(entry: WorldBookEntry) {
   return {
     uid: entry.uid,
@@ -147,8 +253,10 @@ export function buildWorldBookAuditPrompt(
   evidenceContext: string,
   discussionRecord: string,
   entries: WorldBookEntry[],
+  source?: PrivateKnowledgeSource | null,
+  characters?: string[],
 ): string {
-  const deterministicFindings = findWorldBookAuditFindings(entries);
+  const deterministicFindings = findWorldBookFindings(entries, source, characters);
   return `你是独立的 SillyTavern 世界书审计 AI。候选条目由另一位 AI 或用户创建，你必须逐条对照角色设定与用户决定，返回可供用户确认的修订候选。
 
 审计原则：
@@ -160,6 +268,7 @@ export function buildWorldBookAuditPrompt(
 - 格式规范使用 constant=true、position=4、depth=1、role=0、ignoreBudget=true、preventRecursion=true。
 - 保留未列出的高级运行参数；只修订下方 JSON 中允许出现的字段。
 - issues 只写仍值得用户知道的具体问题；不要写泛泛的表扬。
+- 世界书条目不区分发言角色。若某条目含有只有部分角色知晓的事实，必须写进 issues 提醒用户；不要把这类内容改写成更直白的版本。
 
 程序预检结果：
 ${deterministicFindings.length > 0

@@ -26,6 +26,7 @@ import {
 import { useAIService } from '@/services/aiService';
 import {
   buildWorldBookAuditPrompt,
+  findWorldBookFindings,
   parseWorldBookAuditResponse,
 } from '@/lib/auditPipeline';
 
@@ -381,6 +382,7 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
               contextInfo,
               dialogueInfo,
               generatedEntries,
+              project?.psycheTimeline?.plan?.initialState ?? null,
             ),
           }],
           '你是独立的世界书审计 AI。逐条核对证据、关键词和 SillyTavern 运行参数，只返回指定 JSON。',
@@ -417,7 +419,12 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
       const response = await generateAuditResponse(
         [{
           role: 'user',
-          content: buildWorldBookAuditPrompt(evidenceContext, discussionRecord, entries),
+          content: buildWorldBookAuditPrompt(
+            evidenceContext,
+            discussionRecord,
+            entries,
+            project?.psycheTimeline?.plan?.initialState ?? null,
+          ),
         }],
         '你是独立的世界书审计 AI。逐条核对证据、关键词和 SillyTavern 运行参数，只返回指定 JSON。',
       );
@@ -432,6 +439,32 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
     } finally {
       setIsAuditing(false);
     }
+  };
+
+  /**
+   * 本地确定性检查：不调用模型，直接用运行参数规则与时间线知识状态核对。
+   * 这里也会报告世界书条目与时间线知识边界冲突导致的私有知识泄漏风险。
+   */
+  const handleLocalCheck = () => {
+    if (entries.length === 0) return;
+    const findings = findWorldBookFindings(
+      entries,
+      project?.psycheTimeline?.plan?.initialState ?? null,
+    );
+    if (findings.length === 0) {
+      alert('本地检查通过：未发现运行参数问题，也没有检测到私有知识泄漏风险。');
+      return;
+    }
+    const lines = findings
+      .map(item => `条目 ${item.uid} [${item.severity}] ${item.message}`)
+      .join('\n');
+    setPreviewEntries(entries.map(entry => ({ ...entry })));
+    setPreviewIssues(entries.map(entry => findings
+      .filter(item => item.uid === entry.uid)
+      .map(item => item.message)));
+    setPreviewMode('audit');
+    setShowPreview(true);
+    alert(`本地检查发现 ${findings.length} 项问题：\n\n${lines}`);
   };
 
   /**
@@ -582,6 +615,15 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
           >
             <ShieldCheck className="w-4 h-4 inline mr-1" />
             {isAuditing ? '审计中...' : 'AI审计'}
+          </button>
+          <button
+            onClick={handleLocalCheck}
+            disabled={entries.length === 0}
+            className="px-3 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            title="不调用模型，检查运行参数与私有知识泄漏风险"
+          >
+            <AlertCircle className="w-4 h-4 inline mr-1" />
+            本地检查
           </button>
           <button
             onClick={handleAdd}

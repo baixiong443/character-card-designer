@@ -41,6 +41,7 @@
     "test:story-embedding": "node --experimental-strip-types --test tests/story-embedding.test.mjs",
     "test:story-progress": "node --experimental-strip-types --test tests/story-source-progress.test.mjs",
     "test:audit": "node --experimental-strip-types --test tests/audit-pipeline.test.mjs",
+    "test:worldbook-leak": "node --experimental-strip-types --test tests/private-knowledge-leak.test.mjs",
     "test:timeline": "node --experimental-strip-types --test tests/psyche-timeline.test.mjs",
     "electron": "electron .",
     "electron-dev": "electron .",

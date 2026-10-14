@@ -52,7 +52,7 @@ if not exist "node_modules" (
 REM A directory can exist yet be incomplete, so verify the key package.
 if not exist "node_modules\next" (
     echo.
-    echo [!] dependencies incomplete ^(next missing^). Repairing...
+    echo [^^!] dependencies incomplete ^(next missing^). Repairing...
     echo.
     call npm install
 )
@@ -66,11 +66,13 @@ if not exist "node_modules\next" (
 )
 
 REM ---------- port 3000 ----------
+REM Only a LISTENING socket means the port is really taken. A TIME_WAIT entry
+REM (common right after a restart) is harmless and must not warn.
 set "BUSY="
-netstat -ano -p tcp | findstr /c:":3000 " >nul 2>&1 && set "BUSY=1"
+for /f "tokens=5" %%p in ('netstat -ano -p tcp ^| findstr /c:"LISTENING" ^| findstr /c:":3000 "') do set "BUSY=1"
 if defined BUSY (
     echo.
-    echo [!] Port 3000 is busy. Next.js will use another port;
+    echo [^^!] Port 3000 is busy. Next.js will use another port;
     echo     take the URL printed after startup.
 )
 

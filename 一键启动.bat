@@ -1,91 +1,103 @@
 @echo off
 chcp 65001 >nul
-title 角色卡设计器 - 一键启动
+setlocal enabledelayedexpansion
+title Character Card Designer - Dev Launcher
+cd /d "%~dp0"
 
 echo.
 echo ====================================
-echo    角色卡设计器 - 一键启动工具
+echo    Character Card Designer
+echo    Source-mode launcher (dev)
 echo ====================================
 echo.
+REM Chinese text lives in a UTF-8 sidecar: cmd.exe cannot reliably parse
+REM inline non-ASCII in a .bat after chcp 65001 (lines get truncated).
+if exist "%~dp0启动说明.txt" type "%~dp0启动说明.txt"
+echo.
 
-REM 检查Node.js是否已安装
+REM ---------- Node.js ----------
 node -v >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ❌ 未检测到 Node.js！
+    echo [X] Node.js not found.
     echo.
-    echo 📥 请先安装 Node.js：
-    echo    1. 打开浏览器访问：https://nodejs.org/
-    echo    2. 下载并安装 LTS 版本
-    echo    3. 安装完成后，重新运行此脚本
+    echo     Install Node.js first: https://nodejs.org/
+    echo     Then run this script again.
     echo.
     pause
     exit /b 1
 )
+set "NODEV="
+for /f "delims=" %%v in ('node -v') do set "NODEV=%%v"
+echo [OK] Node.js !NODEV!
 
-echo ✅ Node.js 已安装
-node -v
-echo.
-
-REM 检查是否已安装依赖
+REM ---------- dependencies ----------
 if not exist "node_modules" (
-    echo 📦 首次运行，正在安装依赖...
-    echo ⏳ 这可能需要 2-3 分钟，请耐心等待...
+    echo.
+    echo [..] First run: installing dependencies, about 2-3 minutes...
     echo.
     call npm install
-    if %errorlevel% neq 0 (
+    if errorlevel 1 (
         echo.
-        echo ❌ 依赖安装失败！
-        echo 💡 请检查网络连接，或尝试切换 npm 镜像源
+        echo [X] npm install failed. Check network or switch npm registry.
         echo.
         pause
         exit /b 1
     )
     echo.
-    echo ✅ 依赖安装完成！
-    echo.
+    echo [OK] dependencies installed
 ) else (
-    echo ✅ 依赖已安装
+    echo [OK] node_modules present
+)
+
+REM A directory can exist yet be incomplete, so verify the key package.
+if not exist "node_modules\next" (
     echo.
+    echo [!] dependencies incomplete ^(next missing^). Repairing...
+    echo.
+    call npm install
+)
+if not exist "node_modules\next" (
+    echo.
+    echo [X] dependencies still incomplete.
+    echo     Delete node_modules and run this script again.
+    echo.
+    pause
+    exit /b 1
 )
 
-REM 获取本机IP地址
-for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do (
-    set IP=%%a
-    goto :found_ip
+REM ---------- port 3000 ----------
+set "BUSY="
+netstat -ano -p tcp | findstr /c:":3000 " >nul 2>&1 && set "BUSY=1"
+if defined BUSY (
+    echo.
+    echo [!] Port 3000 is busy. Next.js will use another port;
+    echo     take the URL printed after startup.
 )
-:found_ip
-set IP=%IP:~1%
 
+REM ---------- LAN address ----------
+REM Only trust the adapter that owns the default gateway, so Hyper-V,
+REM Bluetooth and other virtual adapters are not reported by mistake.
+set "IP="
+for /f "delims=" %%a in ('powershell -NoProfile -Command "(Get-NetIPConfiguration | Where-Object { $_.IPv4DefaultGateway -ne $null } | Select-Object -First 1).IPv4Address.IPAddress"') do set "IP=%%a"
+
+echo.
 echo ====================================
-echo    🚀 正在启动服务器...
+echo    Starting dev server...
 echo ====================================
 echo.
-echo 📱 访问地址：
-echo    💻 本机访问: http://localhost:3000
-echo    📱 手机访问: http://%IP%:3000
+echo   Local   : http://localhost:3000
+if defined IP (
+    if /i not "!IP!"=="127.0.0.1" echo   LAN     : http://!IP!:3000
+)
 echo.
-echo 💡 提示：
-echo    - 确保手机和电脑在同一WiFi下
-echo    - 按 Ctrl+C 可停止服务器
-echo    - 关闭此窗口会停止服务
+echo   Press Ctrl+C to stop the server.
+echo   Closing this window stops the service.
 echo.
 echo ====================================
 echo.
 
-REM 启动开发服务器
 call npm run dev
 
+echo.
+echo Server stopped.
 pause
-
-
-
-
-
-
-
-
-
-
-
-
-

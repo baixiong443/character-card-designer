@@ -450,6 +450,21 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
               </div>
             </div>
 
+            <div>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">嵌入代理地址（可选）</label>
+              <input
+                type="text"
+                value={localSettings.embedding.proxyUrl ?? ''}
+                onChange={event => updateEmbedding({ proxyUrl: event.target.value })}
+                placeholder="留空则沿用上方主代理"
+                disabled={localSettings.embedding.provider === 'browser-local'}
+                className="w-full px-3 py-2 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+              />
+              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                嵌入走独立的服务器转发，不会自动使用系统代理。留空时复用「代理地址」的值。
+              </p>
+            </div>
+
             <button
               type="button"
               onClick={() => void handleEmbeddingTest()}

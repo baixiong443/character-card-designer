@@ -1,7 +1,7 @@
 import { useSettingsStore } from '@/stores/settingsStore';
 import { resolveRolePrompt, type AIPromptRole } from '@/lib/promptCustomization';
 import { useState } from 'react';
-import { readApiResponse } from '@/lib/apiResponse';
+import { readApiResponse, parseJsonOrSseResponse } from '@/lib/apiResponse';
 import { isRetryableAIError } from '@/lib/apiRetry';
 
 const RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
@@ -94,19 +94,42 @@ export function useAIService() {
             apiKey: settings.apiKey,
             provider: settings.provider,
             requestBody,
+            proxyUrl: settings.proxyUrl,
           }),
         });
 
         if (!response.ok) {
-          const errorData = await readApiResponse(response).catch(() => ({})) as {
-            error?: { message?: string };
-            message?: string;
-          };
-          console.error('API错误响应:', errorData);
+          // Do not swallow the cause. Previously this was
+          // `readApiResponse(response).catch(() => ({}))`, so any non-JSON body
+          // (a Cloudflare 403 challenge page, a gateway HTML error, an empty
+          // 405) collapsed to `{}` and the log showed nothing usable.
+          const rawText = await response.text().catch(() => '');
+          const errorData = (() => {
+            try {
+              return parseJsonOrSseResponse(rawText);
+            } catch {
+              return null;
+            }
+          })() as { error?: { message?: string }; message?: string; code?: unknown } | null;
+
+          const preview = rawText.trim().slice(0, 300);
+          const looksLikeHtml = preview.startsWith('<');
+          console.error('API错误响应:', {
+            status: response.status,
+            statusText: response.statusText,
+            contentType: response.headers.get('content-type'),
+            parsed: errorData,
+            bodyPreview: preview || '(empty body)',
+          });
+
+          const detail = errorData?.error?.message
+            || errorData?.message
+            || (looksLikeHtml
+              ? '上游返回了网页而不是 API 响应，通常说明 API 端点填成了网站地址、或请求被地区拦截；请确认使用 API 域名并在需要时填写代理地址'
+              : preview || '上游返回了空响应');
+
           throw new AIRequestError(
-            errorData?.error?.message
-              || errorData?.message
-              || `API请求失败 (${response.status} ${response.statusText})`,
+            `API请求失败 (${response.status} ${response.statusText})：${detail}`,
             {
               status: response.status,
               retryAfterMs: parseRetryAfter(response.headers.get('retry-after')),

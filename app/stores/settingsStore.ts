@@ -83,6 +83,7 @@ const defaultSettings: AISettings = {
     model: 'nomic-embed-text',
     batchSize: 16,
     expectedDimensions: null,
+    proxyUrl: '',
   },
 };
 
@@ -99,6 +100,11 @@ export function withEmbeddingDefaults(settings: Partial<AISettings>): AISettings
       ...embedding,
       provider,
       batchSize: Math.max(1, Math.min(64, Math.floor(Number(embedding.batchSize) || defaultSettings.embedding.batchSize))),
+      // Fall back to the main proxy so a single field configures both routes;
+      // an explicit embedding proxy still wins.
+      proxyUrl: typeof embedding.proxyUrl === 'string' && embedding.proxyUrl.trim()
+        ? embedding.proxyUrl
+        : (typeof settings.proxyUrl === 'string' ? settings.proxyUrl : ''),
     },
   };
 }

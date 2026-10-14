@@ -778,6 +778,10 @@ export function buildPsycheTimelineCompilationPrompt(
     `- 每个事件必须包含 id, chapterId, sceneId, canonicalOrder, kind, rigidity, summary, participants, effects, narrativePurposes, evidenceRefs, revealPolicy, adaptation。\n` +
     `- 每个事件可选包含 scope：世界级进程（天灾、战争、瘟疫、政权更迭）标为 "world"；由角色行为与关系驱动的事件标为 "interpersonal" 或省略。\n` +
     `- scope="world" 的事件在剧情分歧后仍会被 PTE 保留，所以它是否被阻止必须由真正的前因决定：把「堤坝已修复」「敌军已被歼灭」这类可验证条件写进 forbiddenWhen，不要依赖分歧度。\n` +
+    `- 世界级进程必须自带时间闸门，否则它会一直停在 locked，永远不会自行发生。首选回合数作为时钟：{"preconditions":{">=":[{"var":"turn"},5]}}。turn 每回合必定递增，因此在任何聊天里都可靠。\n` +
+    `- 只有原文明确给出可量化时长时，才改用故事内时间 {"var":"time.relativeMinutes"}（例如原文写明三日后，即 4320 分钟）。注意 time.relativeMinutes 只在提取器确认「确实过去了一段可量化时间」时才递增，普通对话可能长期停在 0，所以不要把它当作默认时钟。\n` +
+    `- 时间闸门与因果闸门要一起用：preconditions 决定「时间到了没有」，forbiddenWhen 决定「前因是否已被消除」。两者都写，世界事件才会既按时发生、又能在玩家真的改变前因时被阻止。\n` +
+    `- 不要编造原文没有给出的间隔；证据只支持「之后会发生」而不支持具体间隔时，只用因果条件，不要写时间闸门。\n` +
     `- 所有事件 ID 都要预先出现在 initialState.canonEvents；故事起点以后尚未到达的事件用 locked，起点处可发生的首个事件才可用 eligible。\n` +
     `- 所有 narrativePurposes 引用都要预先出现在 initialState.narrativePurposes，初始通常为 pending。\n` +
     `- participants 中的每个角色都要出现在 initialState.characters，即使当前不在场也以 present:false 登记。\n` +

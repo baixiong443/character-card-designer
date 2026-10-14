@@ -3,6 +3,7 @@ import {
   resolveEmbeddingEndpoint,
   type StoryEmbeddingProvider,
 } from '@/lib/storyEmbedding';
+import { proxiedFetch, asBodyInit } from '@/lib/proxiedFetch';
 
 export const runtime = 'nodejs';
 
@@ -12,6 +13,7 @@ interface EmbeddingProxyRequest {
   apiKey?: unknown;
   model?: unknown;
   inputs?: unknown;
+  proxyUrl?: unknown;
 }
 
 function isRemoteProvider(value: unknown): value is Exclude<StoryEmbeddingProvider, 'browser-local'> {
@@ -38,17 +40,18 @@ export async function POST(request: Request): Promise<Response> {
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     const apiKey = typeof input.apiKey === 'string' ? input.apiKey.trim() : '';
     if (apiKey && input.provider !== 'ollama') headers.Authorization = `Bearer ${apiKey}`;
-    const upstream = await fetch(endpoint, {
+    const upstream = await proxiedFetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(buildEmbeddingRequestBody(input.provider, input.model, input.inputs as string[])),
-      cache: 'no-store',
+      proxyUrl: typeof input.proxyUrl === 'string' ? input.proxyUrl : null,
+      timeoutMs: 120_000,
     });
     const responseHeaders = new Headers();
-    responseHeaders.set('Content-Type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
-    const retryAfter = upstream.headers.get('retry-after');
+    responseHeaders.set('Content-Type', upstream.headers['content-type'] || 'application/json; charset=utf-8');
+    const retryAfter = upstream.headers['retry-after'];
     if (retryAfter) responseHeaders.set('Retry-After', retryAfter);
-    return new Response(await upstream.arrayBuffer(), {
+    return new Response(asBodyInit(upstream.body), {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders,

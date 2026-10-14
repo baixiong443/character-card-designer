@@ -24,6 +24,13 @@ export interface AISettings {
   provider: 'openai' | 'claude' | 'custom';
   apiEndpoint: string;
   apiKey: string;
+  /**
+   * Optional HTTP proxy used by the server-side AI routes, e.g. `127.0.0.1:7897`.
+   * Node's fetch ignores the system proxy, so without this the direct dial can be
+   * refused by an upstream edge (Cloudflare answers some regions with an HTML 403)
+   * even though the browser itself reaches the endpoint fine. Empty means direct.
+   */
+  proxyUrl: string;
   model: string;
   reviewModel?: string;
   auditModel?: string;
@@ -55,6 +62,7 @@ const defaultSettings: AISettings = {
   provider: 'openai',
   apiEndpoint: 'https://api.openai.com/v1/chat/completions',
   apiKey: '',
+  proxyUrl: '',
   model: 'gpt-4',
   reviewModel: '',
   auditModel: '',
@@ -109,6 +117,7 @@ export const useSettingsStore = create<SettingsState>()(
               apiEndpoint: settings.apiEndpoint,
               apiKey: settings.apiKey,
               provider: settings.provider,
+              proxyUrl: settings.proxyUrl,
             }),
           });
           const payload = await response.json().catch(() => null);
@@ -166,6 +175,7 @@ export const useSettingsStore = create<SettingsState>()(
               apiKey: settings.apiKey,
               provider: settings.provider,
               requestBody,
+              proxyUrl: settings.proxyUrl,
             }),
           });
 

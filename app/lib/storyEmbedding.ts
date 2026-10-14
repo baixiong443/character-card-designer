@@ -13,6 +13,8 @@ export interface StoryEmbeddingSettings {
   model: string;
   batchSize: number;
   expectedDimensions?: number | null;
+  /** Optional HTTP proxy for the server-side embedding route; empty means direct. */
+  proxyUrl?: string;
 }
 
 export interface StoryEmbeddingProgress {
@@ -199,6 +201,7 @@ export async function embedStorySourceChunks(
         apiKey: settings.apiKey,
         model: settings.model,
         inputs: batch.map(chunk => chunk.text),
+        proxyUrl: settings.proxyUrl ?? '',
       }),
     });
     const vectors = parseEmbeddingResponse(settings.provider, await responseJson(response), batch.length);

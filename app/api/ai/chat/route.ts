@@ -1,4 +1,5 @@
 import { resolveChatEndpoint, type CompatibleProvider } from '@/lib/modelDiscovery';
+import { proxiedFetch, asBodyInit } from '@/lib/proxiedFetch';
 
 export const runtime = 'nodejs';
 
@@ -7,6 +8,7 @@ interface ChatProxyRequest {
   apiKey?: unknown;
   provider?: unknown;
   requestBody?: unknown;
+  proxyUrl?: unknown;
 }
 
 function isProvider(value: unknown): value is CompatibleProvider {
@@ -42,18 +44,20 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    const upstream = await fetch(endpoint, {
+    // No explicit deadline: generations legitimately take minutes. The caller
+    // aborts via the request signal instead.
+    const upstream = await proxiedFetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(input.requestBody),
-      cache: 'no-store',
+      proxyUrl: typeof input.proxyUrl === 'string' ? input.proxyUrl : null,
     });
     const responseHeaders = new Headers();
-    responseHeaders.set('Content-Type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
-    const retryAfter = upstream.headers.get('retry-after');
+    responseHeaders.set('Content-Type', upstream.headers['content-type'] || 'application/json; charset=utf-8');
+    const retryAfter = upstream.headers['retry-after'];
     if (retryAfter) responseHeaders.set('Retry-After', retryAfter);
 
-    return new Response(await upstream.arrayBuffer(), {
+    return new Response(asBodyInit(upstream.body), {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders,

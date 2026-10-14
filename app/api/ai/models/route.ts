@@ -1,4 +1,5 @@
 import { resolveModelListEndpoint, type CompatibleProvider } from '@/lib/modelDiscovery';
+import { proxiedFetch, asBodyInit } from '@/lib/proxiedFetch';
 
 export const runtime = 'nodejs';
 
@@ -6,6 +7,7 @@ interface ModelProxyRequest {
   apiEndpoint?: unknown;
   apiKey?: unknown;
   provider?: unknown;
+  proxyUrl?: unknown;
 }
 
 function isProvider(value: unknown): value is CompatibleProvider {
@@ -36,17 +38,18 @@ export async function POST(request: Request): Promise<Response> {
       }
     }
 
-    const upstream = await fetch(endpoint, {
+    const upstream = await proxiedFetch(endpoint, {
       method: 'GET',
       headers,
-      cache: 'no-store',
+      proxyUrl: typeof input.proxyUrl === 'string' ? input.proxyUrl : null,
+      timeoutMs: 60_000,
     });
     const responseHeaders = new Headers();
-    responseHeaders.set('Content-Type', upstream.headers.get('content-type') || 'application/json; charset=utf-8');
-    const retryAfter = upstream.headers.get('retry-after');
+    responseHeaders.set('Content-Type', upstream.headers['content-type'] || 'application/json; charset=utf-8');
+    const retryAfter = upstream.headers['retry-after'];
     if (retryAfter) responseHeaders.set('Retry-After', retryAfter);
 
-    return new Response(await upstream.arrayBuffer(), {
+    return new Response(asBodyInit(upstream.body), {
       status: upstream.status,
       statusText: upstream.statusText,
       headers: responseHeaders,

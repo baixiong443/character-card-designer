@@ -197,6 +197,29 @@ export default function SettingsPanel({ onClose }: SettingsPanelProps) {
             </p>
           </div>
 
+          {/* 代理地址 */}
+          <div>
+            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+              代理地址（可选）
+            </label>
+            <input
+              type="text"
+              value={localSettings.proxyUrl}
+              onChange={(e) =>
+                setLocalSettings({
+                  ...localSettings,
+                  proxyUrl: e.target.value,
+                })
+              }
+              placeholder="127.0.0.1:7897"
+              className="w-full px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+            />
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              留空表示直连。服务器转发请求不会自动使用系统代理，若上游返回 403 或超时，可填入本机 HTTP 代理。<br />
+              示例：127.0.0.1:7897（可省略 http://）；仅支持 HTTP 代理，不支持 SOCKS。
+            </p>
+          </div>
+
           {/* 模型名称 */}
           <div>
             <div className="flex items-center justify-between mb-2 gap-3">

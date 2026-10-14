@@ -15,18 +15,44 @@ export default function ProjectSelector() {
   } = useProgressStore();
 
   const [showDropdown, setShowDropdown] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [createError, setCreateError] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
 
   const currentProject = getCurrentProject();
   const projects = getProjectList();
 
-  const handleCreate = () => {
-    const name = prompt('请输入项目名称：', `角色卡 ${new Date().toLocaleDateString('zh-CN')}`);
-    if (name) {
-      createProject(name.trim());
-      setShowDropdown(false);
+  const openCreateForm = () => {
+    setNewProjectName(`角色卡 ${new Date().toLocaleDateString('zh-CN')}`);
+    setCreateError('');
+    setShowCreateForm(true);
+  };
+
+  const closeCreateForm = () => {
+    setShowCreateForm(false);
+    setNewProjectName('');
+    setCreateError('');
+  };
+
+  const handleCreate = (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = newProjectName.trim();
+
+    if (!name) {
+      setCreateError('请输入项目名称');
+      return;
     }
+
+    if (projects.some(project => project.name === name)) {
+      setCreateError('已存在同名项目，请换一个名称');
+      return;
+    }
+
+    createProject(name);
+    closeCreateForm();
+    setShowDropdown(false);
   };
 
   const handleDelete = (id: string, e: React.MouseEvent) => {
@@ -74,7 +100,7 @@ export default function ProjectSelector() {
             <div className="p-3 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between">
               <h3 className="font-semibold text-slate-900 dark:text-white">我的项目</h3>
               <button
-                onClick={handleCreate}
+                onClick={openCreateForm}
                 className="flex items-center space-x-1 px-2 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-xs transition-colors"
               >
                 <Plus className="w-3 h-3" />
@@ -82,12 +108,62 @@ export default function ProjectSelector() {
               </button>
             </div>
 
+            {showCreateForm && (
+              <form
+                onSubmit={handleCreate}
+                className="p-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/40"
+              >
+                <label
+                  htmlFor="new-project-name"
+                  className="block mb-1.5 text-xs font-medium text-slate-700 dark:text-slate-300"
+                >
+                  项目名称
+                </label>
+                <input
+                  id="new-project-name"
+                  type="text"
+                  value={newProjectName}
+                  onChange={(e) => {
+                    setNewProjectName(e.target.value);
+                    if (createError) setCreateError('');
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') closeCreateForm();
+                  }}
+                  className="w-full px-2.5 py-2 border border-slate-300 dark:border-slate-600 rounded text-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                  aria-invalid={Boolean(createError)}
+                  aria-describedby={createError ? 'new-project-error' : undefined}
+                  autoFocus
+                />
+                {createError && (
+                  <p id="new-project-error" className="mt-1.5 text-xs text-red-600 dark:text-red-400">
+                    {createError}
+                  </p>
+                )}
+                <div className="mt-2.5 flex justify-end space-x-2">
+                  <button
+                    type="button"
+                    onClick={closeCreateForm}
+                    className="px-3 py-1.5 text-xs text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded transition-colors"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-3 py-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded transition-colors"
+                  >
+                    创建
+                  </button>
+                </div>
+              </form>
+            )}
+
             <div className="overflow-y-auto flex-1">
               {projects.length === 0 ? (
                 <div className="p-8 text-center text-slate-500 dark:text-slate-400 text-sm">
                   <FolderOpen className="w-12 h-12 mx-auto mb-2 opacity-50" />
                   <p>还没有项目</p>
-                  <p className="text-xs mt-1">点击"新建"创建第一个项目</p>
+                  <p className="text-xs mt-1">点击“新建”创建第一个项目</p>
                 </div>
               ) : (
                 projects.map((project) => (

@@ -1,101 +1,104 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Download, FileJson, Image, FileText } from 'lucide-react';
-import { useCharacterStore } from '@/stores/characterStore';
-import { useWorldBookStore } from '@/stores/worldbookStore';
-import { convertToCharacterBookEntry, WORLDBOOK_DEFAULTS } from '@/types/worldbook';
+import { X, Download, FileJson, Image as ImageIcon, FileText, AlertCircle, Archive, Check } from 'lucide-react';
+import { createDefaultCharacter, useProgressStore } from '@/stores/progressStore';
+import { CharacterBook, convertToCharacterBookEntry, WORLDBOOK_DEFAULTS } from '@/types/worldbook';
+import {
+  buildCharacterCardV2,
+  buildCharacterCardV3,
+  validateCharacterCard,
+  writeCharacterCardPng,
+} from '@/lib/characterCard';
+import {
+  buildCardTimelineExtension,
+  buildPsycheBookBytes,
+  validatePsycheTimelineState,
+} from '@/lib/psycheTimeline';
+import { getStorySourceCorpus } from '@/lib/storySourceDb';
 
 interface ExportDialogProps {
   onClose: () => void;
 }
 
 export default function ExportDialog({ onClose }: ExportDialogProps) {
-  const { character } = useCharacterStore();
-  const { entries } = useWorldBookStore();
-  const [format, setFormat] = useState<'v3' | 'v2' | 'png' | 'markdown'>('v3');
+  const project = useProgressStore(state => state.getCurrentProject());
+  const character = project?.character || createDefaultCharacter();
+  const sourceEnvelope = project?.sourceEnvelope || null;
+  const entries = project?.worldBookEntries || [];
+  const bookMetadata = project?.bookMetadata || null;
+  const psycheTimeline = project?.psycheTimeline || null;
+  const [format, setFormat] = useState<'v3' | 'v2' | 'png' | 'psychebook' | 'markdown'>('v3');
   const [showImageUpload, setShowImageUpload] = useState(false);
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null);
+  const [uploadedImage, setUploadedImage] = useState<string | null>(sourceEnvelope?.sourceImageDataUrl ?? null);
+  const [diagnostics, setDiagnostics] = useState<string[]>([]);
 
-  const handleExport = () => {
-    switch (format) {
-      case 'v3':
-        exportV3JSON();
-        break;
-      case 'v2':
-        exportV2JSON();
-        break;
-      case 'png':
-        exportPNG();
-        break;
-      case 'markdown':
-        exportMarkdown();
-        break;
+  const buildCharacterBook = (): CharacterBook | undefined => {
+    if (entries.length === 0 && !bookMetadata) return undefined;
+
+    return {
+      ...bookMetadata,
+      name: bookMetadata?.name ?? `${character.name || 'Character'}'s Lorebook`,
+      description: bookMetadata?.description ?? '由 Psyche 角色卡设计器生成的世界书',
+      scan_depth: bookMetadata?.scan_depth ?? WORLDBOOK_DEFAULTS.DEFAULT_SCAN_DEPTH,
+      token_budget: bookMetadata?.token_budget ?? WORLDBOOK_DEFAULTS.DEFAULT_TOKEN_BUDGET,
+      recursive_scanning: bookMetadata?.recursive_scanning ?? WORLDBOOK_DEFAULTS.DEFAULT_RECURSIVE_SCANNING,
+      extensions: bookMetadata?.extensions ?? {},
+      entries: entries.map(entry => convertToCharacterBookEntry(entry)),
+    };
+  };
+
+  const checkCard = (card: unknown): boolean => {
+    const result = validateCharacterCard(card);
+    setDiagnostics([...result.errors, ...result.warnings]);
+    return result.errors.length === 0;
+  };
+
+  const buildTimelineExtension = () => buildCardTimelineExtension(psycheTimeline, true);
+
+  const handleExport = async () => {
+    try {
+      switch (format) {
+        case 'v3':
+          exportV3JSON();
+          break;
+        case 'v2':
+          exportV2JSON();
+          break;
+        case 'png':
+          void exportPNG();
+          break;
+        case 'psychebook':
+          await exportPsycheBook();
+          break;
+        case 'markdown':
+          exportMarkdown();
+          break;
+      }
+    } catch (error) {
+      setDiagnostics([error instanceof Error ? error.message : String(error)]);
     }
   };
 
   const exportV3JSON = () => {
-    // 转换世界书条目为 Character Card V3 格式
-    const characterBookEntries = entries.map(entry => convertToCharacterBookEntry(entry));
-
-    const v3Card = {
-      spec: 'chara_card_v3',
-      spec_version: '3.0',
-      data: {
-        name: character.name || '未命名角色',
-        description: character.description || '',
-        personality: character.personality || '',
-        scenario: character.scenario || '',
-        first_mes: character.first_mes || '',
-        mes_example: character.mes_example || '',
-        creator_notes: character.creator_notes || '',
-        system_prompt: character.system_prompt || '',
-        post_history_instructions: character.post_history_instructions || '',
-        alternate_greetings: character.alternate_greetings || [],
-        tags: character.tags || [],
-        creator: 'Psyche 角色卡设计器',
-        character_version: '1.0',
-        // 添加世界书
-        character_book: characterBookEntries.length > 0 ? {
-          name: `${character.name || 'Character'}'s Lorebook`,
-          description: '由 Psyche 角色卡设计器生成的世界书',
-          scan_depth: WORLDBOOK_DEFAULTS.DEFAULT_SCAN_DEPTH,
-          token_budget: WORLDBOOK_DEFAULTS.DEFAULT_TOKEN_BUDGET,
-          recursive_scanning: WORLDBOOK_DEFAULTS.DEFAULT_RECURSIVE_SCANNING,
-          extensions: {},
-          entries: characterBookEntries,
-        } : undefined,
-        extensions: {
-          psyche: {
-            mode: 'standard',
-            t_layers: {
-              t0_enabled: true,
-              t1_enabled: false,
-              t2_enabled: false,
-              t3_enabled: false,
-            },
-          },
-          furry: {
-            enabled: false,
-            species: '',
-          },
-        },
-      },
-    };
-
+    const v3Card = buildCharacterCardV3(
+      character,
+      sourceEnvelope,
+      buildCharacterBook(),
+      buildTimelineExtension(),
+    );
+    if (!checkCard(v3Card)) return;
     downloadJSON(v3Card, `${character.name || 'character'}_v3.json`);
   };
 
   const exportV2JSON = () => {
-    const v2Card = {
-      name: character.name || '未命名角色',
-      description: character.description || '',
-      personality: character.personality || '',
-      scenario: character.scenario || '',
-      first_mes: character.first_mes || '',
-      mes_example: character.mes_example || '',
-    };
-
+    const v2Card = buildCharacterCardV2(
+      character,
+      sourceEnvelope,
+      buildCharacterBook(),
+      buildTimelineExtension(),
+    );
+    if (!checkCard(v2Card)) return;
     downloadJSON(v2Card, `${character.name || 'character'}_v2.json`);
   };
 
@@ -122,56 +125,11 @@ export default function ExportDialog({ onClose }: ExportDialogProps) {
     }
 
     try {
-      // 生成 V3 JSON
-      const characterBookEntries = entries.map(entry => convertToCharacterBookEntry(entry));
-      
-      const v3Card = {
-        spec: 'chara_card_v3',
-        spec_version: '3.0',
-        data: {
-          name: character.name || '未命名角色',
-          description: character.description || '',
-          personality: character.personality || '',
-          scenario: character.scenario || '',
-          first_mes: character.first_mes || '',
-          mes_example: character.mes_example || '',
-          creator_notes: '',
-          system_prompt: '',
-          post_history_instructions: '',
-          alternate_greetings: [],
-          tags: character.tags || [],
-          creator: 'Psyche 角色卡设计器',
-          character_version: '1.0',
-          character_book: characterBookEntries.length > 0 ? {
-            name: `${character.name || 'Character'}'s Lorebook`,
-            description: '由 Psyche 角色卡设计器生成的世界书',
-            scan_depth: WORLDBOOK_DEFAULTS.DEFAULT_SCAN_DEPTH,
-            token_budget: WORLDBOOK_DEFAULTS.DEFAULT_TOKEN_BUDGET,
-            recursive_scanning: WORLDBOOK_DEFAULTS.DEFAULT_RECURSIVE_SCANNING,
-            extensions: {},
-            entries: characterBookEntries,
-          } : undefined,
-          extensions: {
-            psyche: {
-              mode: 'standard',
-              t_layers: {
-                t0_enabled: true,
-                t1_enabled: false,
-                t2_enabled: false,
-                t3_enabled: false,
-              },
-            },
-            furry: {
-              enabled: false,
-              species: '',
-            },
-          },
-        },
-      };
-
-      // 将 JSON 转换为 base64
-      const jsonString = JSON.stringify(v3Card);
-      const base64Json = btoa(unescape(encodeURIComponent(jsonString)));
+      const characterBook = buildCharacterBook();
+      const timelineExtension = buildTimelineExtension();
+      const v2Card = buildCharacterCardV2(character, sourceEnvelope, characterBook, timelineExtension);
+      const v3Card = buildCharacterCardV3(character, sourceEnvelope, characterBook, timelineExtension);
+      if (!checkCard(v2Card) || !checkCard(v3Card)) return;
 
       // 创建 canvas 并绘制图片
       const img = new window.Image();
@@ -200,8 +158,8 @@ export default function ExportDialog({ onClose }: ExportDialogProps) {
           const arrayBuffer = await blob.arrayBuffer();
           const uint8Array = new Uint8Array(arrayBuffer);
 
-          // 嵌入 character card 数据到 PNG
-          const pngWithMetadata = embedTextChunk(uint8Array, 'chara', base64Json);
+          // SillyTavern 1.18 同时写入 chara(V2) 与 ccv3(V3)，读取时优先 ccv3。
+          const pngWithMetadata = writeCharacterCardPng(uint8Array, v2Card, v3Card);
 
           // 下载
           const finalBlob = new Blob([pngWithMetadata as unknown as BlobPart], { type: 'image/png' });
@@ -231,93 +189,30 @@ export default function ExportDialog({ onClose }: ExportDialogProps) {
     }
   };
 
-  /**
-   * 嵌入 tEXt chunk 到 PNG 数据中
-   */
-  const embedTextChunk = (pngData: Uint8Array, keyword: string, text: string): Uint8Array => {
-    // PNG 签名: 89 50 4E 47 0D 0A 1A 0A
-    const pngSignature = new Uint8Array([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
-    
-    // 验证 PNG 签名
-    if (pngData.length < 8 || !pngData.slice(0, 8).every((val, i) => val === pngSignature[i])) {
-      throw new Error('不是有效的 PNG 文件');
+  const exportPsycheBook = async () => {
+    if (!psycheTimeline?.plan) {
+      setDiagnostics(['当前项目没有可导出的结构化时间线。请使用“剧情线模式”完成文本导入。']);
+      return;
     }
-
-    // 找到 IEND chunk 的位置
-    let iendPosition = -1;
-    for (let i = 8; i < pngData.length - 4; i++) {
-      if (pngData[i] === 0x49 && pngData[i+1] === 0x45 && pngData[i+2] === 0x4E && pngData[i+3] === 0x44) {
-        iendPosition = i - 4; // IEND chunk 开始于长度字段之前
-        break;
+    const validation = validatePsycheTimelineState(psycheTimeline);
+    if (!validation.valid) {
+      setDiagnostics(validation.errors);
+      return;
+    }
+    try {
+      const source = project?.storySource
+        ? await getStorySourceCorpus(project.storySource.corpusId)
+        : null;
+      if (project?.storySource && !source) {
+        setDiagnostics(['项目引用的原文库不存在，无法生成包含原作索引的故事包。请重新导入原文。']);
+        return;
       }
+      const bytes = buildPsycheBookBytes(psycheTimeline, '1.0.0', source || undefined);
+      downloadBinary(bytes, `${character.name || psycheTimeline.plan.title || 'story'}.psychebook`, 'application/zip');
+      setDiagnostics([]);
+    } catch (error) {
+      setDiagnostics([error instanceof Error ? error.message : String(error)]);
     }
-
-    if (iendPosition === -1) {
-      throw new Error('无法找到 PNG IEND chunk');
-    }
-
-    // 创建 tEXt chunk
-    const keywordBytes = new TextEncoder().encode(keyword);
-    const textBytes = new TextEncoder().encode(text);
-    const chunkData = new Uint8Array(keywordBytes.length + 1 + textBytes.length);
-    chunkData.set(keywordBytes, 0);
-    chunkData[keywordBytes.length] = 0; // null separator
-    chunkData.set(textBytes, keywordBytes.length + 1);
-
-    // 计算 chunk 长度
-    const chunkLength = chunkData.length;
-    const lengthBytes = new Uint8Array(4);
-    new DataView(lengthBytes.buffer).setUint32(0, chunkLength, false);
-
-    // tEXt chunk type
-    const chunkType = new Uint8Array([0x74, 0x45, 0x58, 0x74]); // "tEXt"
-
-    // 计算 CRC
-    const crcData = new Uint8Array(chunkType.length + chunkData.length);
-    crcData.set(chunkType, 0);
-    crcData.set(chunkData, chunkType.length);
-    const crc = calculateCRC(crcData);
-    const crcBytes = new Uint8Array(4);
-    new DataView(crcBytes.buffer).setUint32(0, crc, false);
-
-    // 组合新的 PNG 数据
-    const newPngData = new Uint8Array(
-      pngData.length + lengthBytes.length + chunkType.length + chunkData.length + crcBytes.length
-    );
-    
-    newPngData.set(pngData.slice(0, iendPosition), 0);
-    let offset = iendPosition;
-    newPngData.set(lengthBytes, offset);
-    offset += lengthBytes.length;
-    newPngData.set(chunkType, offset);
-    offset += chunkType.length;
-    newPngData.set(chunkData, offset);
-    offset += chunkData.length;
-    newPngData.set(crcBytes, offset);
-    offset += crcBytes.length;
-    newPngData.set(pngData.slice(iendPosition), offset);
-
-    return newPngData;
-  };
-
-  /**
-   * 计算 CRC32
-   */
-  const calculateCRC = (data: Uint8Array): number => {
-    const crcTable = new Uint32Array(256);
-    for (let i = 0; i < 256; i++) {
-      let c = i;
-      for (let j = 0; j < 8; j++) {
-        c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      }
-      crcTable[i] = c;
-    }
-
-    let crc = 0xFFFFFFFF;
-    for (let i = 0; i < data.length; i++) {
-      crc = crcTable[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
-    }
-    return (crc ^ 0xFFFFFFFF) >>> 0;
   };
 
   const exportMarkdown = () => {
@@ -359,7 +254,7 @@ ${character.tags?.join(', ') || '无'}
     downloadText(markdown, `${character.name || 'character'}.md`);
   };
 
-  const downloadJSON = (data: any, filename: string) => {
+  const downloadJSON = (data: unknown, filename: string) => {
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -373,6 +268,18 @@ ${character.tags?.join(', ') || '无'}
 
   const downloadText = (text: string, filename: string) => {
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadBinary = (data: Uint8Array, filename: string, type: string) => {
+    const blob = new Blob([data as unknown as BlobPart], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -448,7 +355,7 @@ ${character.tags?.join(', ') || '无'}
                     Character Card V2 JSON
                   </div>
                   <div className="text-xs text-slate-500 dark:text-slate-400">
-                    兼容旧版 · 基础字段
+                    标准 V2 包装结构 · 完整字段 · 世界书兼容
                   </div>
                 </div>
                 {format === 'v2' && (
@@ -468,7 +375,7 @@ ${character.tags?.join(', ') || '无'}
                     : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
                 }`}
               >
-                <Image className="w-5 h-5 mr-3 text-green-600 dark:text-green-400" />
+                <ImageIcon className="w-5 h-5 mr-3 text-green-600 dark:text-green-400" />
                 <div className="text-left flex-1">
                   <div className="font-semibold text-slate-900 dark:text-white">
                     PNG Card
@@ -482,6 +389,32 @@ ${character.tags?.join(', ') || '无'}
                     <svg className="w-3 h-3 text-white" fill="currentColor" viewBox="0 0 20 20">
                       <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                     </svg>
+                  </div>
+                )}
+              </button>
+
+              <button
+                onClick={() => setFormat('psychebook')}
+                disabled={!psycheTimeline?.plan}
+                title={psycheTimeline?.plan ? '导出供 Psyche Timeline Engine 安装的故事包' : '先用剧情线模式导入文本并完成结构化时间线编译'}
+                className={`w-full flex items-center p-4 rounded-lg border-2 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                  format === 'psychebook'
+                    ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20'
+                    : 'border-slate-200 dark:border-slate-700 hover:border-slate-300'
+                }`}
+              >
+                <Archive className="w-5 h-5 mr-3 text-amber-600 dark:text-amber-400" />
+                <div className="text-left flex-1">
+                  <div className="font-semibold text-slate-900 dark:text-white">
+                    PTE 故事包 (.psychebook)
+                  </div>
+                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                    插件安装包 · 结构化事件与初始状态 · 可摘要校验
+                  </div>
+                </div>
+                {format === 'psychebook' && (
+                  <div className="w-5 h-5 rounded-full bg-indigo-600 flex items-center justify-center">
+                    <Check className="w-3 h-3 text-white" />
                   </div>
                 )}
               </button>
@@ -514,15 +447,37 @@ ${character.tags?.join(', ') || '无'}
             </div>
           </div>
 
+          {diagnostics.length > 0 && (
+            <div className="border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-900/20 rounded-lg p-4">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 mt-0.5 text-amber-700 dark:text-amber-300 flex-shrink-0" />
+                <div className="text-xs text-amber-800 dark:text-amber-200 space-y-1">
+                  {diagnostics.map((message, index) => <div key={`${message}-${index}`}>{message}</div>)}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* 预览 */}
           <div className="bg-slate-50 dark:bg-slate-900 rounded-lg p-4">
             <div className="text-sm text-slate-600 dark:text-slate-400 mb-2">
               📝 <strong>角色名称:</strong> {character.name || '未命名角色'}
             </div>
             <div className="text-xs text-slate-500 dark:text-slate-500">
-              文件名: {character.name || 'character'}_
-              {format === 'markdown' ? '.md' : format === 'png' ? '.png' : `_${format}.json`}
+              文件名: {character.name || 'character'}
+              {format === 'markdown'
+                ? '.md'
+                : format === 'png'
+                  ? '.png'
+                  : format === 'psychebook'
+                    ? '.psychebook'
+                    : `_${format}.json`}
             </div>
+            {psycheTimeline?.plan && (
+              <div className="text-xs text-slate-500 dark:text-slate-500 mt-1">
+                PTE 时间线: {psycheTimeline.plan.events.length} 个事件 · {psycheTimeline.plan.storyId}
+              </div>
+            )}
           </div>
         </div>
 
@@ -577,7 +532,7 @@ ${character.tags?.join(', ') || '无'}
               ) : (
                 <label className="block">
                   <div className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-8 text-center hover:border-indigo-500 transition-colors cursor-pointer">
-                    <Image className="w-12 h-12 mx-auto text-slate-400 mb-3" />
+                    <ImageIcon className="w-12 h-12 mx-auto text-slate-400 mb-3" />
                     <p className="text-sm text-slate-600 dark:text-slate-400 mb-1">
                       点击上传或拖拽图片到此处
                     </p>
@@ -598,11 +553,11 @@ ${character.tags?.join(', ') || '无'}
                 <p className="text-xs text-indigo-700 dark:text-indigo-300">
                   <strong>💡 提示：</strong>
                   <br />
-                  • JSON 数据会嵌入到图片的 metadata 中
+                  • 同时嵌入 chara(V2) 与 ccv3(V3) 元数据
                   <br />
-                  • SillyTavern 可以直接拖拽导入这个 PNG
+                  • SillyTavern 1.18 会优先读取 ccv3
                   <br />
-                  • 图片尺寸建议：400x600 或更大
+                  • 从 PNG 导入的卡会自动沿用原图，也可以重新选择
                 </p>
               </div>
             </div>
@@ -633,4 +588,3 @@ ${character.tags?.join(', ') || '无'}
     </div>
   );
 }
-

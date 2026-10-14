@@ -1,13 +1,33 @@
-import { useState } from 'react';
-import { Sparkles, Send, Loader, Download, ChevronLeft, ChevronRight, CheckCircle, FileUp, FileJson, RefreshCw, AlertCircle, X, Plus, Save, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+/* eslint-disable @typescript-eslint/no-explicit-any, react/no-unescaped-entities -- AI payloads are schema-flexible and existing Chinese UI copy contains quoted labels. */
+import { Sparkles, Send, Loader, Download, ChevronLeft, ChevronRight, CheckCircle, FileUp, FileJson, RefreshCw, AlertCircle, X, Plus, Save, Trash2, ShieldCheck } from 'lucide-react';
 import { useAIService } from '@/services/aiService';
 import ExportDialog from '@/components/ExportDialog';
 import ImportTextDialog from '@/components/ImportTextDialog';
 import ImportCardDialog from '@/components/ImportCardDialog';
 import WorldBookEditor from '@/components/WorldBookEditor';
 import ProjectSelector from '@/components/ProjectSelector';
-import { useProgressStore } from '@/stores/progressStore';
-import { useCharacterStore } from '@/stores/characterStore';
+import StorySourceStatus from '@/components/StorySourceStatus';
+import {
+  createEmptyFinalAudit,
+  createEmptyFinalDraft,
+  type FinalFieldBlock,
+  type FinalDraftState,
+  useProgressStore,
+} from '@/stores/progressStore';
+import { parseCharacterFromStages } from '@/lib/stageParser';
+import {
+  assembleFinalDraft,
+  FINAL_DESCRIPTION_STEPS,
+  getNextRequiredFinalStep,
+} from '@/lib/finalCompiler';
+import {
+  buildFinalFieldAuditPrompt,
+  buildStageSummaryAuditPrompt,
+  parseAuditedFieldResult,
+  parseAuditedResult,
+} from '@/lib/auditPipeline';
+import type { PsycheTimelineProjectState } from '@/lib/psycheTimeline';
 
 const STAGES = [
   '基础身份',
@@ -111,7 +131,7 @@ const SPECIALTY_TYPES = [
 
 // 专项深化的提示词（根据类型选择）
 const SPECIALTY_PROMPTS: Record<string, string> = {
-  psyche: `【阶段4：Psyche深度感官】
+  psyche: `【阶段5：Psyche深度感官】
 基于已有的角色设定，现在进行极致的感官细节深化。请详细创作：
 
 🔥 Furry特征（如果是兽人角色）：
@@ -142,7 +162,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 使用Psyche系统的T1（微观触觉）和T2（全感官饱和）标准进行描写。`,
 
-  combat: `【阶段4：战斗冒险专项】
+  combat: `【阶段5：战斗冒险专项】
 基于已有的角色设定，现在深化战斗和冒险相关的细节。请详细设计：
 
 ⚔️ 战斗风格：
@@ -170,7 +190,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合跑团（DND/COC）、RPG游戏、战斗向小说。`,
 
-  romance: `【阶段4：恋爱互动专项】
+  romance: `【阶段5：恋爱互动专项】
 基于已有的角色设定，现在深化恋爱和情感互动的细节。请详细创作：
 
 💕 恋爱人格：
@@ -205,7 +225,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合恋爱游戏、互动小说、甜文创作。`,
 
-  horror: `【阶段4：恐怖诡异专项】
+  horror: `【阶段5：恐怖诡异专项】
 基于已有的角色设定，现在深化恐怖和诡异元素。请详细创作：
 
 👻 诡异特征：
@@ -240,7 +260,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合恐怖游戏、克苏鲁跑团、惊悚小说。`,
 
-  slice_of_life: `【阶段4：日常治愈专项】
+  slice_of_life: `【阶段5：日常治愈专项】
 基于已有的角色设定，现在深化日常生活和治愈元素。请详细创作：
 
 ☀️ 日常习惯：
@@ -280,7 +300,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合日常向、治愈系、温馨故事创作。`,
 
-  serious: `【阶段4：严肃剧情专项】
+  serious: `【阶段5：严肃剧情专项】
 基于已有的角色设定，现在深化深度剧情和角色成长。请详细创作：
 
 🧠 内心世界：
@@ -327,7 +347,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合严肃文学、深度剧情、角色成长向创作。`,
 
-  comedy: `【阶段4：喜剧搞笑专项】
+  comedy: `【阶段5：喜剧搞笑专项】
 基于已有的角色设定，现在深化喜剧和搞笑元素。请详细创作：
 
 😄 幽默感：
@@ -367,7 +387,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合搞笑漫画、轻松向小说、喜剧游戏。`,
 
-  scifi: `【阶段4：科幻硬核专项】
+  scifi: `【阶段5：科幻硬核专项】
 基于已有的角色设定，现在深化科幻和科技元素。请详细创作：
 
 🤖 科技改造：
@@ -413,7 +433,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合赛博朋克、硬科幻、机甲、科幻游戏。`,
 
-  fantasy: `【阶段4：奇幻魔法专项】
+  fantasy: `【阶段5：奇幻魔法专项】
 基于已有的角色设定，现在深化奇幻和魔法元素。请详细创作：
 
 ✨ 魔法系统：
@@ -465,7 +485,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合奇幻小说、魔法世界、DND、奇幻RPG。`,
 
-  school: `【阶段4：学园校园专项】
+  school: `【阶段5：学园校园专项】
 基于已有的角色设定，现在深化校园生活元素。请详细创作：
 
 🎓 学校身份：
@@ -524,7 +544,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合校园恋爱、青春故事、学园游戏、校园日常。`,
 
-  wuxia: `【阶段4：武侠历史专项】
+  wuxia: `【阶段5：武侠历史专项】
 基于已有的角色设定，现在深化武侠和古风元素。请详细创作：
 
 🗡️ 武功修为：
@@ -582,7 +602,7 @@ const SPECIALTY_PROMPTS: Record<string, string> = {
 
 适合武侠小说、古风RPG、江湖游戏、历史架空。`,
 
-  idol: `【阶段4：偶像娱乐专项】
+  idol: `【阶段5：偶像娱乐专项】
 基于已有的角色设定，现在深化偶像和演艺元素。请详细创作：
 
 🎤 偶像定位：
@@ -1426,6 +1446,65 @@ const STAGE9_STEP_PROMPTS = [
 ⚠️ 融合而非复制两遍！保持详细程度！严格按标记格式输出！立即开始：`,
 ];
 
+const INTERACTION_FIELD_PROMPT = `根据给出的互动设计资料，只生成以下角色卡字段。
+
+严格输出这些标记，不要输出完整描述，不要解释：
+
+【首条消息】
+第三人称开场场景，尽量沿用资料中的原文和情境。
+
+【对话示例】
+使用 {{char}} 和 {{user}}，多组对话用 <START> 分隔。
+
+【备用开场白】
+每个备用开场之间使用单独一行 --- 分隔。没有资料时可以留空。
+
+禁止输出【角色名】、【完整描述】或世界设定字段。`;
+
+const WORLD_FIELD_PROMPT = `根据给出的世界整合资料，只生成以下角色卡字段。
+
+严格输出这些标记，不要输出完整描述，不要解释：
+
+【场景设定】
+整合世界观、当前情境、重要地点和必要规则。
+
+【系统提示词】
+仅保留真正需要常驻约束 AI 行为的简短指令；没有必要时留空。
+
+【后历史指令】
+仅保留适合放在对话历史之后的行为约束；没有必要时留空。
+
+禁止输出首条消息、对话示例或角色描述。`;
+
+const CORE_FIELD_PROMPT = `根据给出的基础身份资料生成角色卡核心字段。
+
+严格输出这些标记，不要输出完整描述，不要解释：
+
+【角色名】
+只写 AI 主要扮演角色的名称。
+
+【性格】
+保留角色的核心性格、行为动机和稳定反应模式。
+
+【创作者备注】
+只写面向角色卡使用者的玩法说明；没有必要时留空。
+
+【标签】
+用逗号分隔，最多 12 个。
+
+不要生成首条消息、场景设定或对话示例。`;
+
+const FINAL_DISCUSSION_PROMPT = `你是角色卡编译阶段的审阅助手。回答用户关于当前草稿、字段取舍和质量问题的提问。
+不要重新输出完整角色卡；只讨论用户明确询问的局部内容，并给出简短、可执行的修改建议。`;
+
+function requireFieldMarkers(response: string, markers: string[]): string {
+  const missing = markers.filter(marker => !response.includes(`【${marker}】`));
+  if (missing.length > 0) {
+    throw new Error(`AI 输出缺少字段标记：${missing.join('、')}`);
+  }
+  return response.trim();
+}
+
 export default function StageFlow() {
   // 使用progressStore保存创作进度（自动持久化）
   const {
@@ -1434,6 +1513,11 @@ export default function StageFlow() {
     clearCurrentProject,
     createProject,
     hasSavedProgress,
+    applyCharacterPatch,
+    updatePsycheTimeline,
+    updateStorySource,
+    updateFinalDraft,
+    resetFinalDraft,
   } = useProgressStore();
 
   const currentProject = getCurrentProject();
@@ -1442,6 +1526,10 @@ export default function StageFlow() {
   const stageMessages = currentProject?.stageMessages || [[], [], [], [], [], [], [], [], []];
   const selectedSpecialty = currentProject?.selectedSpecialty || null;
   const lastSaved = currentProject?.lastSaved || null;
+  const finalDraft = currentProject?.finalDraft || createEmptyFinalDraft();
+  const stage9AccumulatedContent = assembleFinalDraft(finalDraft);
+  const stage9Step = finalDraft.completedSteps.length;
+  const nextRequiredStage9Step = getNextRequiredFinalStep(finalDraft.completedSteps);
 
   const [userInput, setUserInput] = useState('');
   const [errorMessage, setErrorMessage] = useState<string>('');
@@ -1449,54 +1537,66 @@ export default function StageFlow() {
 
   const [showExport, setShowExport] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [hasImportSession, setHasImportSession] = useState(false);
   const [showImportCard, setShowImportCard] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [isCompilingAll, setIsCompilingAll] = useState(false);
+  const [isAuditingFinal, setIsAuditingFinal] = useState(false);
 
-  // 阶段9：累积式填充内容
-  const [stage9AccumulatedContent, setStage9AccumulatedContent] = useState('【完整描述】\n\n');
-  const [stage9Step, setStage9Step] = useState(0); // 当前进行到第几步（0-6）
   const [showStage9Editor, setShowStage9Editor] = useState(false); // 是否显示文本编辑器
+  const [showFinalAuditPreview, setShowFinalAuditPreview] = useState(false);
 
-  const { generateResponse, loading } = useAIService();
-  const { parseFromStageResults } = useCharacterStore();
+  const { generateResponse, generateAuditResponse, loading } = useAIService();
+
+  useEffect(() => {
+    setUserInput('');
+    setErrorMessage('');
+    setShowSpecialtySelection(false);
+    setShowStage9Editor(false);
+    setShowFinalAuditPreview(false);
+    setShowImport(false);
+    setHasImportSession(false);
+  }, [currentProject?.id]);
+
+  const openTextImport = () => {
+    setHasImportSession(true);
+    setShowImport(true);
+  };
 
   // 处理导出按钮点击：自动解析stageResults到character
   const handleExportClick = () => {
-    // ⚠️ 特殊处理阶段9：如果阶段9有AI对话但没有总结，将最后一条AI回复作为stageResults[8]
-    const finalStageResults = [...stageResults];
-    if (currentStage === 8 && stageMessages[8] && stageMessages[8].length > 0 && !stageResults[8]) {
-      // 找到最后一条AI回复
-      const lastAIMessage = [...stageMessages[8]].reverse().find(msg => msg.role === 'assistant');
-      if (lastAIMessage && lastAIMessage.content.includes('【角色名】')) {
-        // 如果AI回复包含结构化数据标记，使用它
-        finalStageResults[8] = lastAIMessage.content;
-        // 保存到store（可选，因为导出时已经用了）
-        updateProgress({ stageResults: finalStageResults });
-      }
+    if (finalDraft.completedSteps.length < 9 || !finalDraft.audit?.applied) {
+      setErrorMessage('请先完成分段编译、最终字段审计并应用审计候选');
+      return;
     }
-
-    parseFromStageResults(finalStageResults);
+    const finalStageResults = [...stageResults];
+    if (stage9AccumulatedContent.trim()) {
+      finalStageResults[8] = stage9AccumulatedContent;
+      updateProgress({ stageResults: finalStageResults });
+    }
+    applyCharacterPatch(parseCharacterFromStages(finalStageResults));
     setShowExport(true);
   };
 
   // 处理导入完成（文本分析或角色卡）
-  const handleImportComplete = (importedResults: string[]) => {
-    // 检查是否有剧情轨迹数据（存储在 results[9]）
-    const plotTrajectory = importedResults[9];
-    if (plotTrajectory && plotTrajectory.trim()) {
-      // 将剧情轨迹写入 characterStore 的 creator_notes
-      const { updateField } = useCharacterStore.getState();
-      updateField('creator_notes', plotTrajectory);
-      console.log('📖 剧情轨迹已写入 creator_notes');
-    }
+  const handleImportComplete = (
+    importedResults: string[],
+    psycheTimeline?: PsycheTimelineProjectState | null,
+    storySource?: import('@/lib/storySource').StorySourceLibraryRef | null,
+  ) => {
+    if (psycheTimeline !== undefined) updatePsycheTimeline(psycheTimeline);
+    if (storySource !== undefined) updateStorySource(storySource);
 
-    // 只保留前9个阶段的结果（0-8），剧情轨迹已单独处理
+    // 前9个阶段进入角色卡编译；剧情轨迹只保存在结构化时间线状态中。
     const stageResultsOnly = importedResults.slice(0, 9);
 
     updateProgress({
       stageResults: stageResultsOnly,
       currentStage: 0,
     });
+    resetFinalDraft();
+    setShowImport(false);
+    setHasImportSession(false);
   };
 
   const currentMessages = stageMessages[currentStage];
@@ -1511,6 +1611,7 @@ export default function StageFlow() {
     const newStageMessages = [...stageMessages];
     newStageMessages[currentStage] = updatedMessages;
     updateProgress({ stageMessages: newStageMessages });
+    if (currentStage < 8 && finalDraft.completedSteps.length > 0) resetFinalDraft();
     setUserInput('');
     setErrorMessage(''); // 清除之前的错误
 
@@ -1539,6 +1640,8 @@ export default function StageFlow() {
       } else if (currentStage === 8 && userInput.includes('【执行第2步】')) {
         // 阶段9-第2步：生成其他字段
         stagePrompt = STAGE9_STEP2_PROMPT;
+      } else if (currentStage === 8) {
+        stagePrompt = FINAL_DISCUSSION_PROMPT;
       } else {
         // 其他情况：使用标准阶段提示词
         stagePrompt = STAGE_PROMPTS[currentStage];
@@ -1551,29 +1654,7 @@ export default function StageFlow() {
 
       newStageMessages[currentStage] = [...updatedMessages, { role: 'assistant', content: response }];
 
-      // ⚠️ 特殊处理：如果是阶段9，并且AI回复包含结构化数据标记，自动保存到stageResults
-      if (currentStage === 8 && (response.includes('【角色名】') || response.includes('【完整描述】'))) {
-        const newResults = [...stageResults];
-        // 如果是第1步（包含【完整描述】）或完整输出，替换整个结果
-        // 如果是第2步（包含【角色名】但不含【完整描述】），追加到现有结果
-        if (response.includes('【完整描述】')) {
-          // 第1步：只有【完整描述】
-          newResults[8] = response;
-        } else if (response.includes('【角色名】')) {
-          // 第2步：追加其他字段
-          if (stageResults[8]) {
-            newResults[8] = stageResults[8] + '\n\n' + response;
-          } else {
-            newResults[8] = response;
-          }
-        }
-        updateProgress({
-          stageMessages: newStageMessages,
-          stageResults: newResults
-        });
-      } else {
-        updateProgress({ stageMessages: newStageMessages });
-      }
+      updateProgress({ stageMessages: newStageMessages });
     } catch (error: any) {
       console.error('AI 响应失败:', error);
 
@@ -1610,6 +1691,7 @@ export default function StageFlow() {
     const newStageMessages = [...stageMessages];
     newStageMessages[currentStage] = messagesUpToUser;
     updateProgress({ stageMessages: newStageMessages });
+    if (currentStage < 8 && finalDraft.completedSteps.length > 0) resetFinalDraft();
 
     try {
       // 构建上下文
@@ -1633,6 +1715,8 @@ export default function StageFlow() {
         stagePrompt = SPECIALTY_PROMPTS[selectedSpecialty];
       } else if (currentStage === 8 && lastUserMessage && lastUserMessage.content.includes('【执行第2步】')) {
         stagePrompt = STAGE9_STEP2_PROMPT;
+      } else if (currentStage === 8) {
+        stagePrompt = FINAL_DISCUSSION_PROMPT;
       } else {
         stagePrompt = STAGE_PROMPTS[currentStage];
       }
@@ -1645,27 +1729,7 @@ export default function StageFlow() {
         { role: 'assistant', content: response }
       ];
 
-      // ⚠️ 特殊处理：如果是阶段9，并且AI回复包含结构化数据标记，自动保存到stageResults
-      if (currentStage === 8 && (response.includes('【角色名】') || response.includes('【完整描述】'))) {
-        const newResults = [...stageResults];
-        if (response.includes('【完整描述】')) {
-          // 第1步：只有【完整描述】
-          newResults[8] = response;
-        } else if (response.includes('【角色名】')) {
-          // 第2步：追加其他字段
-          if (stageResults[8]) {
-            newResults[8] = stageResults[8] + '\n\n' + response;
-          } else {
-            newResults[8] = response;
-          }
-        }
-        updateProgress({
-          stageMessages: newStageMessages,
-          stageResults: newResults
-        });
-      } else {
-        updateProgress({ stageMessages: newStageMessages });
-      }
+      updateProgress({ stageMessages: newStageMessages });
 
     } catch (error: any) {
       console.error('重新生成失败:', error);
@@ -1691,6 +1755,20 @@ export default function StageFlow() {
   const goToNextStage = async (shouldSummarize: boolean = false) => {
     if (currentStage >= 8) return; // 9个阶段（0-8），阶段9是导出
 
+    if (!shouldSummarize && currentMessages.length > 0) {
+      const transcript = currentMessages
+        .map(message => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`)
+        .join('\n\n');
+      const newResults = [...stageResults];
+      const importedBase = stageResults[currentStage]?.split('\n\n---\n\n💬 **对话补充：**\n')[0]?.trim();
+      newResults[currentStage] = [
+        importedBase,
+        `💬 **未经总结的对话快照：**\n${transcript}`,
+      ].filter(Boolean).join('\n\n---\n\n');
+      updateProgress({ stageResults: newResults });
+      resetFinalDraft();
+    }
+
     // 如果用户选择生成总结
     if (shouldSummarize && currentMessages.length > 0 && currentStage < 8) {
       setIsGeneratingSummary(true);
@@ -1706,10 +1784,37 @@ export default function StageFlow() {
           }
         ];
 
-        const summary = await generateResponse(
+        let summary = await generateResponse(
           summaryRequest,
           undefined // 不传summarySystemPrompt，使用默认的DEFAULT_PSYCHE_PROMPT
         );
+
+        const importedBase = stageResults[currentStage]
+          ?.split('\n\n---\n\n💬 **对话补充：**\n')[0]
+          ?.trim() || '';
+        const previousStages = stageResults
+          .slice(0, currentStage)
+          .map((result, index) => result?.trim() ? `### 阶段${index + 1}：${STAGES[index]}\n${result.trim()}` : '')
+          .filter(Boolean)
+          .join('\n\n');
+        const discussionRecord = currentMessages
+          .map(message => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`)
+          .join('\n\n');
+        const auditResponse = await generateAuditResponse(
+          [{
+            role: 'user',
+            content: buildStageSummaryAuditPrompt({
+              stageNumber: currentStage + 1,
+              stageTitle: STAGES[currentStage],
+              previousStages,
+              importedBase,
+              discussionRecord,
+              candidate: summary,
+            }),
+          }],
+          '你是独立的角色卡阶段审计 AI。只依据已确认内容和用户决定修订阶段结论，不参与创作讨论。',
+        );
+        summary = parseAuditedResult(auditResponse);
 
         // 保存总结
         const newResults = [...stageResults];
@@ -1717,7 +1822,7 @@ export default function StageFlow() {
 
         // 如果当前阶段已有内容（导入的），将对话补充追加到后面，而不是覆盖
         if (stageResults[currentStage]) {
-          newResults[currentStage] = stageResults[currentStage] + '\n\n---\n\n💬 **对话补充：**\n' + summary;
+          newResults[currentStage] = `${importedBase}\n\n---\n\n💬 **对话补充：**\n${summary}`;
         } else {
         newResults[currentStage] = summary;
         }
@@ -1743,12 +1848,12 @@ export default function StageFlow() {
         } else {
           updateProgress({ stageResults: newResults });
         }
+        resetFinalDraft();
       } catch (error) {
         console.error('生成总结失败:', error);
-        // 即使失败也继续，使用简单总结
-        const newResults = [...stageResults];
-        newResults[currentStage] = `阶段${currentStage + 1}的讨论内容`;
-        updateProgress({ stageResults: newResults });
+        setErrorMessage(`阶段总结失败：${error instanceof Error ? error.message : '请重试'}`);
+        setIsGeneratingSummary(false);
+        return;
       }
       setIsGeneratingSummary(false);
     }
@@ -1787,67 +1892,103 @@ export default function StageFlow() {
     });
   };
 
-  // 阶段9：分步生成（连续对话模式）
-  const handleStage9StepGenerate = async (step: number) => {
-    if (currentStage !== 8 || loading) return;
+  // 阶段9：可恢复的分段编译。描述分区直接收录，AI只生成有限长度的字段块。
+  const handleStage9StepGenerate = async (step: number): Promise<boolean> => {
+    if (currentStage !== 8 || loading) return false;
+
+    const liveProject = useProgressStore.getState().getCurrentProject();
+    if (!liveProject) return false;
+    const liveDraft = liveProject.finalDraft;
+    const liveStageResults = liveProject.stageResults;
+    const liveStageMessages = liveProject.stageMessages;
 
     setErrorMessage('');
 
+    const missingPreviousStep = Array.from({ length: step }, (_, index) => index)
+      .find(index => !liveDraft.completedSteps.includes(index));
+    if (missingPreviousStep !== undefined) {
+      setErrorMessage(`请先完成第 ${missingPreviousStep + 1} 个编译任务`);
+      return false;
+    }
+
     try {
-      const newStageMessages = [...stageMessages];
-      const currentStage9Messages = stageMessages[8] || [];
+      const newStageMessages = [...liveStageMessages];
+      const currentStage9Messages = liveStageMessages[8] || [];
+      const auditTitle = STAGE9_STEP_PROMPTS[step]?.split('\n')[0] || `编译任务 ${step + 1}`;
+      let auditResponse = '';
+      const draftPatch: Partial<FinalDraftState> = {};
 
-      // 1. 添加用户消息（当前步骤的指令）
-      const userMessage = { role: 'user' as const, content: STAGE9_STEP_PROMPTS[step] };
-      const updatedMessages = [...currentStage9Messages, userMessage];
-
-      // 2. 构建上下文：只给当前步骤需要的阶段内容 + 对话历史
-      let contextForAI: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [];
-
-      if (step < 8) {
-        // 第1-8步：只给对应阶段的内容
-        if (stageResults[step]) {
-          contextForAI.push({
-            role: 'system' as const,
-            content: `【阶段${step + 1}确定的内容】\n${stageResults[step]}`
-          });
+      if (step <= 4) {
+        const source = liveStageResults[step]?.trim();
+        if (!source) throw new Error(`阶段 ${step + 1} 没有可收录的内容`);
+        const config = FINAL_DESCRIPTION_STEPS[step];
+        const descriptionSections = { ...liveDraft.descriptionSections };
+        if (step === 4 && source.includes('【用户选择跳过专项深化】')) {
+          delete descriptionSections.specialty;
+          auditResponse = '已记录：用户跳过专项深化，本分区不会写入最终描述。';
+        } else {
+          descriptionSections[config.section] = source;
+          auditResponse = `已将阶段 ${step + 1} 原文收录到“${config.title}”，共 ${source.length} 字。`;
         }
-      } else {
-        // 第9步（生成其他字段）：需要阶段1、6、7的内容
-        if (stageResults[0]) {
-          contextForAI.push({
-            role: 'system' as const,
-            content: `【阶段1确定的内容】\n${stageResults[0]}`
-          });
-        }
-        if (stageResults[5]) {
-          contextForAI.push({
-            role: 'system' as const,
-            content: `【阶段6确定的内容】\n${stageResults[5]}`
-          });
-        }
-        if (stageResults[6]) {
-          contextForAI.push({
-            role: 'system' as const,
-            content: `【阶段7确定的内容】\n${stageResults[6]}`
-          });
-        }
+        draftPatch.descriptionSections = descriptionSections;
+      } else if (step === 5) {
+        const source = liveStageResults[5]?.trim();
+        if (!source) throw new Error('阶段 6 没有互动设计内容');
+        const response = await generateResponse(
+          [{ role: 'user', content: `【互动设计资料】\n${source}` }],
+          INTERACTION_FIELD_PROMPT,
+        );
+        const content = requireFieldMarkers(response, ['首条消息', '对话示例', '备用开场白']);
+        draftPatch.fieldBlocks = { ...liveDraft.fieldBlocks, interaction: content };
+        auditResponse = response;
+      } else if (step === 6) {
+        const source = liveStageResults[6]?.trim();
+        if (!source) throw new Error('阶段 7 没有世界整合内容');
+        const response = await generateResponse(
+          [{ role: 'user', content: `【世界整合资料】\n${source}` }],
+          WORLD_FIELD_PROMPT,
+        );
+        const content = requireFieldMarkers(response, ['场景设定', '系统提示词', '后历史指令']);
+        draftPatch.fieldBlocks = { ...liveDraft.fieldBlocks, world: content };
+        auditResponse = response;
+      } else if (step === 7) {
+        const review = liveStageResults[7]?.trim()
+          || '尚未形成质量检查结论。导出前请检查角色名、描述、首条消息、场景和对话示例。';
+        draftPatch.review = review;
+        auditResponse = review;
+      } else if (step === 8) {
+        const source = liveStageResults[0]?.trim();
+        if (!source) throw new Error('阶段 1 没有基础身份内容');
+        const response = await generateResponse(
+          [{
+            role: 'user',
+            content: `【基础身份资料】\n${source}\n\n【质量检查参考】\n${liveDraft.review || '无'}`,
+          }],
+          CORE_FIELD_PROMPT,
+        );
+        const content = requireFieldMarkers(response, ['角色名', '性格', '创作者备注', '标签']);
+        draftPatch.fieldBlocks = { ...liveDraft.fieldBlocks, core: content };
+        auditResponse = response;
       }
 
-      // 添加阶段9的对话历史（包含刚添加的用户消息）
-      contextForAI.push(...updatedMessages as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>);
+      const completedSteps = [...new Set([...liveDraft.completedSteps, step])].sort((a, b) => a - b);
+      const jobErrors = { ...liveDraft.jobErrors };
+      delete jobErrors[step];
+      updateFinalDraft({
+        ...draftPatch,
+        completedSteps,
+        jobErrors,
+        manualText: null,
+        audit: createEmptyFinalAudit(),
+      });
 
-      // 3. 调用AI（AI通过对话历史记住之前步骤的处理结果）
-      const response = await generateResponse(contextForAI, STAGE9_STEP_PROMPTS[step]);
-
-      // 4. 保存AI回复到对话历史
-      newStageMessages[8] = [...updatedMessages, { role: 'assistant', content: response }];
+      newStageMessages[8] = [
+        ...currentStage9Messages,
+        { role: 'user', content: `【编译任务 ${step + 1}】${auditTitle}` },
+        { role: 'assistant', content: auditResponse },
+      ];
       updateProgress({ stageMessages: newStageMessages });
-
-      // 5. 追加到累积内容（简单追加，后面再优化格式）
-      const newContent = stage9AccumulatedContent + response + '\n\n';
-      setStage9AccumulatedContent(newContent);
-      setStage9Step(step + 1);
+      return true;
 
     } catch (error: any) {
       console.error('阶段9分步生成失败:', error);
@@ -1860,16 +2001,213 @@ export default function StageFlow() {
         errorDetail = error;
       }
       setErrorMessage(errorDetail);
+      updateFinalDraft({
+        jobErrors: { ...liveDraft.jobErrors, [step]: errorDetail },
+      });
+      return false;
     }
+  };
+
+  const handleCompileAll = async () => {
+    if (currentStage !== 8 || isCompilingAll || loading) return;
+    setIsCompilingAll(true);
+    try {
+      let step = getNextRequiredFinalStep(
+        useProgressStore.getState().getCurrentProject()?.finalDraft.completedSteps || [],
+      );
+      while (step < 9) {
+        const succeeded = await handleStage9StepGenerate(step);
+        if (!succeeded) break;
+        step = getNextRequiredFinalStep(
+          useProgressStore.getState().getCurrentProject()?.finalDraft.completedSteps || [],
+        );
+      }
+    } finally {
+      setIsCompilingAll(false);
+    }
+  };
+
+  const handleAuditFinalFields = async () => {
+    if (currentStage !== 8 || isAuditingFinal || loading || isCompilingAll) return;
+
+    const liveProject = useProgressStore.getState().getCurrentProject();
+    if (!liveProject || liveProject.finalDraft.completedSteps.length < 9) {
+      setErrorMessage('请先完成全部 9 个编译任务');
+      return;
+    }
+    if (liveProject.finalDraft.manualText !== null) {
+      setErrorMessage('累积内容已经被手动编辑，无法可靠地按字段审计。请重置编译草稿，完成审计后再手动微调。');
+      return;
+    }
+
+    setIsAuditingFinal(true);
+    setErrorMessage('');
+
+    const existingAudit = liveProject.finalDraft.audit?.applied
+      ? createEmptyFinalAudit()
+      : liveProject.finalDraft.audit || createEmptyFinalAudit();
+    let candidateFieldBlocks = { ...existingAudit.candidateFieldBlocks };
+    let completedBlocks = [...existingAudit.completedBlocks];
+    let jobErrors = { ...existingAudit.jobErrors };
+    const worldBookEvidence = liveProject.worldBookEntries.length > 0
+      ? JSON.stringify(liveProject.worldBookEntries.map(entry => ({
+          uid: entry.uid,
+          keys: entry.keys,
+          content: entry.content,
+          constant: entry.constant,
+          position: entry.position,
+          depth: entry.depth,
+          role: entry.role,
+        })), null, 2)
+      : '当前项目没有世界书条目。';
+
+    const jobs: Array<{
+      block: FinalFieldBlock;
+      label: string;
+      evidence: string;
+      markers: string[];
+      extraRules: string;
+    }> = [
+      {
+        block: 'interaction',
+        label: '互动字段',
+        evidence: liveProject.stageResults[5] || '',
+        markers: ['首条消息', '对话示例', '备用开场白'],
+        extraRules: '- 首条消息必须停留在已确认的故事起点；对话示例不能替用户决定行动。\n- 继续使用 {{char}} 与 {{user}}，不要把占位符替换成真实姓名。',
+      },
+      {
+        block: 'world',
+        label: '世界与运行指令字段',
+        evidence: `【世界整合阶段】\n${liveProject.stageResults[6] || ''}\n\n【当前世界书】\n${worldBookEvidence}`,
+        markers: ['场景设定', '系统提示词', '后历史指令'],
+        extraRules: '- 场景设定只写当前情境和必要世界规则，不复制整本世界书。\n- 系统提示词和后历史指令只保留真正需要常驻的简短行为约束；没有必要时保留标记并留空。',
+      },
+      {
+        block: 'core',
+        label: '核心字段',
+        evidence: `【基础身份】\n${liveProject.stageResults[0] || ''}\n\n【质量检查】\n${liveProject.finalDraft.review || liveProject.stageResults[7] || '无'}`,
+        markers: ['角色名', '性格', '创作者备注', '标签'],
+        extraRules: '- 角色名只能是 AI 主要扮演的角色。\n- 性格必须是稳定的反应模式，不把剧情结局写成恒定人格。\n- 创作者备注面向使用者，不能伪装成会自动注入模型的运行指令。',
+      },
+    ];
+
+    try {
+      for (const job of jobs) {
+        if (completedBlocks.includes(job.block)) continue;
+        const candidate = liveProject.finalDraft.fieldBlocks[job.block]?.trim();
+        if (!candidate) throw new Error(`${job.label}没有可审计的编译结果`);
+
+        try {
+          const response = await generateAuditResponse(
+            [{
+              role: 'user',
+              content: buildFinalFieldAuditPrompt({
+                label: job.label,
+                evidence: job.evidence,
+                candidate,
+                requiredMarkers: job.markers,
+                extraRules: job.extraRules,
+              }),
+            }],
+            '你是角色卡最终编译的独立审计 AI。只修订给定字段块，严格保留字段标记，不参与创作讨论。',
+          );
+          candidateFieldBlocks = {
+            ...candidateFieldBlocks,
+            [job.block]: parseAuditedFieldResult(response, job.markers),
+          };
+          completedBlocks = [...new Set([...completedBlocks, job.block])];
+          delete jobErrors[job.block];
+          updateFinalDraft({
+            audit: {
+              candidateFieldBlocks,
+              completedBlocks,
+              jobErrors,
+              applied: false,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : '独立审计失败';
+          jobErrors = { ...jobErrors, [job.block]: detail };
+          updateFinalDraft({
+            audit: {
+              candidateFieldBlocks,
+              completedBlocks,
+              jobErrors,
+              applied: false,
+              updatedAt: new Date().toISOString(),
+            },
+          });
+          throw new Error(`${job.label}审计失败：${detail}`);
+        }
+      }
+      setShowFinalAuditPreview(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '最终字段审计失败');
+    } finally {
+      setIsAuditingFinal(false);
+    }
+  };
+
+  const handleApplyFinalAudit = () => {
+    const liveProject = useProgressStore.getState().getCurrentProject();
+    if (!liveProject) return;
+    const audit = liveProject.finalDraft.audit || createEmptyFinalAudit();
+    const requiredBlocks: FinalFieldBlock[] = ['interaction', 'world', 'core'];
+    const missing = requiredBlocks.filter(block => !audit.completedBlocks.includes(block)
+      || !audit.candidateFieldBlocks[block]?.trim());
+    if (missing.length > 0) {
+      setErrorMessage(`请先完成全部最终审计：${missing.join('、')}`);
+      return;
+    }
+
+    const markerRequirements: Record<FinalFieldBlock, string[]> = {
+      interaction: ['首条消息', '对话示例', '备用开场白'],
+      world: ['场景设定', '系统提示词', '后历史指令'],
+      core: ['角色名', '性格', '创作者备注', '标签'],
+    };
+    const missingMarkers = requiredBlocks.flatMap(block => markerRequirements[block]
+      .filter(marker => !audit.candidateFieldBlocks[block]?.includes(`【${marker}】`))
+      .map(marker => `${block}.${marker}`));
+    if (missingMarkers.length > 0) {
+      setErrorMessage(`审计候选缺少必要字段标记：${missingMarkers.join('、')}`);
+      return;
+    }
+
+    updateFinalDraft({
+      fieldBlocks: {
+        ...liveProject.finalDraft.fieldBlocks,
+        ...audit.candidateFieldBlocks,
+      },
+      manualText: null,
+      audit: {
+        ...audit,
+        applied: true,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+    setShowFinalAuditPreview(false);
+    setErrorMessage('');
   };
 
   // 阶段9：保存到角色卡
   const handleSaveToCard = () => {
     if (currentStage !== 8) return;
 
+    if (finalDraft.completedSteps.length < 9) {
+      setErrorMessage('请先完成全部 9 个编译任务');
+      return;
+    }
+
+    if (!finalDraft.audit?.applied) {
+      setErrorMessage('请先完成最终字段审计并应用审计候选');
+      return;
+    }
+
     const newResults = [...stageResults];
     newResults[8] = stage9AccumulatedContent;
     updateProgress({ stageResults: newResults });
+    applyCharacterPatch(parseCharacterFromStages(newResults));
 
     alert('✅ 已保存到角色卡！\n\n现在可以点击"导出角色卡"按钮导出JSON文件。');
   };
@@ -1885,6 +2223,7 @@ export default function StageFlow() {
     newStageMessages[currentStage] = newMessages;
 
     updateProgress({ stageMessages: newStageMessages });
+    if (currentStage < 8 && finalDraft.completedSteps.length > 0) resetFinalDraft();
   };
 
   return (
@@ -1902,7 +2241,7 @@ export default function StageFlow() {
             )}
             <div className="flex items-center space-x-1">
               <button
-                onClick={() => setShowImport(true)}
+                onClick={openTextImport}
                 className="px-2 py-1 bg-white/20 hover:bg-white/30 rounded text-xs flex items-center space-x-1 transition-colors"
                 title="导入文本自动分析"
               >
@@ -1952,33 +2291,35 @@ export default function StageFlow() {
           />
         </div>
         {/* 已完成阶段提示 */}
-        {stageResults.length > 0 && (
+        {stageResults.some(result => result?.trim()) && (
           <div className="mt-2 flex flex-wrap gap-1">
-            {stageResults.map((_, idx) => (
-              <span key={idx} className="text-xs bg-white/20 px-2 py-1 rounded flex items-center space-x-1">
-                <CheckCircle className="w-3 h-3" />
-                <span>阶段{idx + 1}✓</span>
-              </span>
-            ))}
+            {stageResults.map((result, idx) => result?.trim() ? (
+                <span key={idx} className="text-xs bg-white/20 px-2 py-1 rounded flex items-center space-x-1">
+                  <CheckCircle className="w-3 h-3" />
+                  <span>阶段{idx + 1}✓</span>
+                </span>
+              ) : null)}
           </div>
         )}
       </div>
 
+      <StorySourceStatus />
+
       {/* 消息区域 */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {/* 显示之前阶段的成果 */}
-        {stageResults.slice(0, currentStage).length > 0 && (
+        {stageResults.slice(0, currentStage).some(result => result?.trim()) && (
           <div className="bg-indigo-50 dark:bg-indigo-900/20 rounded-lg p-4 mb-4">
             <div className="text-sm font-semibold text-indigo-700 dark:text-indigo-300 mb-2">
               📋 之前阶段确定的内容：
             </div>
             <div className="space-y-2 text-sm text-indigo-600 dark:text-indigo-400">
-              {stageResults.slice(0, currentStage).map((result, idx) => (
-                <div key={idx} className="bg-white/50 dark:bg-slate-800/50 rounded p-2">
-                  <div className="font-semibold mb-1">阶段{idx + 1}：{STAGES[idx]}</div>
-                  <div className="text-xs whitespace-pre-wrap">{result}</div>
-                </div>
-              ))}
+              {stageResults.slice(0, currentStage).map((result, idx) => result?.trim() ? (
+                  <div key={idx} className="bg-white/50 dark:bg-slate-800/50 rounded p-2">
+                    <div className="font-semibold mb-1">阶段{idx + 1}：{STAGES[idx]}</div>
+                    <div className="text-xs whitespace-pre-wrap">{result}</div>
+                  </div>
+                ) : null)}
             </div>
           </div>
         )}
@@ -2078,12 +2419,16 @@ export default function StageFlow() {
           </div>
         ))}
 
-        {(loading || isGeneratingSummary) && (
+        {(loading || isGeneratingSummary || isAuditingFinal) && (
           <div className="flex justify-start">
             <div className="bg-slate-100 dark:bg-slate-700 px-4 py-2 rounded-lg flex items-center space-x-2">
               <Loader className="w-5 h-5 animate-spin text-indigo-500" />
               <span className="text-slate-600 dark:text-slate-400 text-sm">
-                {isGeneratingSummary ? '正在总结本阶段成果...' : 'AI 思考中...'}
+                {isGeneratingSummary
+                  ? '正在生成并审计本阶段成果...'
+                  : isAuditingFinal
+                    ? '独立审计正在逐项核对最终字段...'
+                    : 'AI 思考中...'}
               </span>
             </div>
           </div>
@@ -2116,12 +2461,72 @@ export default function StageFlow() {
             </div>
             <textarea
               value={stage9AccumulatedContent}
-              onChange={(e) => setStage9AccumulatedContent(e.target.value)}
+              onChange={(e) => updateFinalDraft({
+                manualText: e.target.value,
+                audit: createEmptyFinalAudit(),
+              })}
               className="w-full h-96 px-3 py-2 border border-purple-300 dark:border-purple-700 rounded-lg bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-sm font-mono resize-y focus:ring-2 focus:ring-purple-500 focus:border-transparent"
               placeholder="点击下方步骤按钮，AI将逐步填充内容到这里..."
             />
             <div className="mt-2 text-xs text-purple-700 dark:text-purple-300">
               💡 您可以随时编辑这里的内容。完成后点击下方"保存"按钮保存到角色卡。
+            </div>
+          </div>
+        )}
+
+        {currentStage === 8
+          && showFinalAuditPreview
+          && (finalDraft.audit?.completedBlocks.length || 0) > 0
+          && !finalDraft.audit?.applied && (
+          <div className="mt-6 border-y border-cyan-300 bg-cyan-50/70 py-4 dark:border-cyan-800 dark:bg-cyan-950/20">
+            <div className="mb-3 flex items-center justify-between px-4">
+              <div>
+                <div className="flex items-center gap-2 text-sm font-semibold text-cyan-900 dark:text-cyan-200">
+                  <ShieldCheck className="h-4 w-4" />
+                  最终审计候选
+                </div>
+                <p className="mt-1 text-xs text-cyan-800 dark:text-cyan-300">
+                  以下内容尚未写回角色卡。可以先核对或修改，再点击“应用审计候选”。
+                </p>
+              </div>
+              <button
+                onClick={() => setShowFinalAuditPreview(false)}
+                className="p-1 text-cyan-700 hover:text-cyan-950 dark:text-cyan-300 dark:hover:text-white"
+                title="关闭审计候选预览"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-4 px-4">
+              {([
+                ['interaction', '互动字段'],
+                ['world', '世界与运行指令'],
+                ['core', '核心字段'],
+              ] as Array<[FinalFieldBlock, string]>).map(([block, label]) => {
+                const value = finalDraft.audit?.candidateFieldBlocks[block];
+                if (!value) return null;
+                return (
+                  <label key={block} className="block text-xs font-medium text-slate-700 dark:text-slate-200">
+                    <span className="mb-1 block">{label}</span>
+                    <textarea
+                      value={value}
+                      onChange={(event) => updateFinalDraft({
+                        audit: {
+                          ...finalDraft.audit,
+                          candidateFieldBlocks: {
+                            ...finalDraft.audit.candidateFieldBlocks,
+                            [block]: event.target.value,
+                          },
+                          applied: false,
+                          updatedAt: new Date().toISOString(),
+                        },
+                      })}
+                      rows={10}
+                      className="w-full resize-y border border-cyan-200 bg-white px-3 py-2 font-mono text-xs text-slate-900 focus:border-cyan-500 focus:outline-none dark:border-cyan-800 dark:bg-slate-900 dark:text-white"
+                    />
+                  </label>
+                );
+              })}
             </div>
           </div>
         )}
@@ -2175,9 +2580,18 @@ export default function StageFlow() {
           {currentStage === 8 && (
             <div className="flex flex-col gap-2 p-2 bg-purple-50 dark:bg-purple-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
               <div className="text-xs font-semibold text-purple-900 dark:text-purple-200">
-                🎯 分步生成（共9步，连续对话，AI自主分类）：
+                🎯 分段编译（共9步，可恢复、可单步重试）：
               </div>
               <div className="flex flex-wrap gap-1">
+                <button
+                  onClick={handleCompileAll}
+                  disabled={loading || isGeneratingSummary || isCompilingAll || isAuditingFinal || nextRequiredStage9Step >= 9}
+                  className="px-2 py-1 bg-indigo-600 text-white rounded text-xs font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50 flex items-center gap-1"
+                  title="从未完成的任务开始自动编译"
+                >
+                  <Sparkles className="w-3 h-3" />
+                  <span>{isCompilingAll ? '编译中...' : '自动编译'}</span>
+                </button>
                 {[
                   { label: '1.阶段1', step: 0 },
                   { label: '2.阶段2', step: 1 },
@@ -2192,15 +2606,15 @@ export default function StageFlow() {
                   <button
                     key={step}
                     onClick={() => handleStage9StepGenerate(step)}
-                    disabled={loading || isGeneratingSummary}
+                    disabled={loading || isGeneratingSummary || isCompilingAll || isAuditingFinal || step > nextRequiredStage9Step}
                     className={`px-2 py-1 rounded text-xs font-medium transition-colors disabled:opacity-50 ${
-                      stage9Step > step
+                      finalDraft.completedSteps.includes(step)
                         ? 'bg-green-600 text-white'
                         : 'bg-purple-600 text-white hover:bg-purple-700'
                     }`}
-                    title={stage9Step > step ? '已完成' : '点击生成'}
+                    title={finalDraft.jobErrors[step] || (finalDraft.completedSteps.includes(step) ? '已完成，可点击重做' : '点击执行')}
                   >
-                    {stage9Step > step && '✓ '}
+                    {finalDraft.completedSteps.includes(step) && '✓ '}
                     {label}
                   </button>
                 ))}
@@ -2214,8 +2628,37 @@ export default function StageFlow() {
                 </button>
 
                 <button
+                  onClick={handleAuditFinalFields}
+                  disabled={finalDraft.completedSteps.length < 9 || isCompilingAll || isAuditingFinal || loading || finalDraft.manualText !== null}
+                  className="px-2 py-1 bg-cyan-700 text-white rounded text-xs font-medium hover:bg-cyan-800 transition-colors disabled:opacity-50 flex items-center gap-1"
+                  title={finalDraft.manualText !== null ? '手动编辑后的整段文本无法按字段审计，请先重置编译草稿' : '使用独立审计模型逐项复核互动、世界和核心字段'}
+                >
+                  <ShieldCheck className="w-3 h-3" />
+                  <span>{isAuditingFinal ? '审计中...' : `最终审计 ${finalDraft.audit?.completedBlocks.length || 0}/3`}</span>
+                </button>
+
+                <button
+                  onClick={handleApplyFinalAudit}
+                  disabled={(finalDraft.audit?.completedBlocks.length || 0) < 3 || finalDraft.audit?.applied || isAuditingFinal}
+                  className="px-2 py-1 bg-teal-600 text-white rounded text-xs font-medium hover:bg-teal-700 transition-colors disabled:opacity-50"
+                  title="确认并写回独立审计产生的三个字段候选"
+                >
+                  {finalDraft.audit?.applied ? '✓ 已应用审计' : '应用审计候选'}
+                </button>
+
+                {(finalDraft.audit?.completedBlocks.length || 0) > 0 && !finalDraft.audit?.applied && (
+                  <button
+                    onClick={() => setShowFinalAuditPreview(value => !value)}
+                    className="px-2 py-1 bg-slate-700 text-white rounded text-xs font-medium hover:bg-slate-800 transition-colors"
+                    title="查看或编辑尚未写回的审计候选"
+                  >
+                    {showFinalAuditPreview ? '隐藏审计候选' : '查看审计候选'}
+                  </button>
+                )}
+
+                <button
                   onClick={handleSaveToCard}
-                  disabled={stage9Step === 0}
+                  disabled={finalDraft.completedSteps.length < 9 || !finalDraft.audit?.applied || isCompilingAll || isAuditingFinal}
                   className="px-2 py-1 bg-green-600 text-white rounded text-xs font-medium hover:bg-green-700 transition-colors disabled:opacity-50 flex items-center space-x-1"
                   title="保存到角色卡"
                 >
@@ -2226,8 +2669,7 @@ export default function StageFlow() {
                 <button
                   onClick={() => {
                     if (confirm('确定要重置吗？')) {
-                      setStage9AccumulatedContent('【完整描述】\n\n');
-                      setStage9Step(0);
+                      resetFinalDraft();
                     }
                   }}
                   className="px-2 py-1 bg-slate-500 text-white rounded text-xs font-medium hover:bg-slate-600 transition-colors"
@@ -2237,7 +2679,14 @@ export default function StageFlow() {
                 </button>
               </div>
               <div className="text-xs text-purple-700 dark:text-purple-300">
-                💡 按顺序点击1-8步，AI逐步处理阶段1-8内容并自动分类（连续对话，AI能记住之前步骤）。第9步生成其他字段。完成后点"保存"→"导出角色卡"。
+                💡 前5步直接收录阶段原文；第6、7、9步生成有限字段。完成后由独立审计模型逐项产生修订候选，确认应用后才能保存和导出。
+                {Object.keys(finalDraft.audit?.jobErrors || {}).length > 0 && (
+                  <span className="block mt-1 text-red-600 dark:text-red-400">
+                    审计失败项：{Object.entries(finalDraft.audit.jobErrors)
+                      .map(([block, message]) => `${block}：${message}`)
+                      .join('；')}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -2293,8 +2742,9 @@ export default function StageFlow() {
 
             {currentStage === 8 && (
             <button
-                onClick={handleExportClick}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors flex items-center space-x-2"
+              onClick={handleExportClick}
+              disabled={finalDraft.completedSteps.length < 9 || !finalDraft.audit?.applied || isAuditingFinal}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Download className="w-4 h-4" />
               <span>导出角色卡</span>
@@ -2335,8 +2785,9 @@ export default function StageFlow() {
       {showExport && <ExportDialog onClose={() => setShowExport(false)} />}
 
       {/* 导入文本对话框 */}
-      {showImport && (
+      {hasImportSession && (
         <ImportTextDialog
+          isOpen={showImport}
           onClose={() => setShowImport(false)}
           onImportComplete={handleImportComplete}
         />

@@ -1,10 +1,33 @@
 'use client';
 
-import { useState } from 'react';
-import { Plus, Trash2, Edit2, Save, X, Sparkles, AlertCircle, Check } from 'lucide-react';
-import { useWorldBookStore } from '@/stores/worldbookStore';
-import { WorldBookEntry } from '@/types/worldbook';
+/* eslint-disable react/no-unescaped-entities -- Existing Chinese UI copy uses quoted examples. */
+
+import { useEffect, useState } from 'react';
+import {
+  AlertCircle,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Edit2,
+  Plus,
+  Save,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Trash2,
+  X,
+} from 'lucide-react';
+import { useProgressStore } from '@/stores/progressStore';
+import {
+  createDefaultWorldBookEntry,
+  WORLDBOOK_DEFAULTS,
+  WorldBookEntry,
+} from '@/types/worldbook';
 import { useAIService } from '@/services/aiService';
+import {
+  buildWorldBookAuditPrompt,
+  parseWorldBookAuditResponse,
+} from '@/lib/auditPipeline';
 
 interface Message {
   role: string;
@@ -16,23 +39,87 @@ interface WorldBookEditorProps {
   currentStageMessages?: Message[];
 }
 
+const POSITION_OPTIONS = [
+  { value: 0, label: '角色定义之前' },
+  { value: 1, label: '角色定义之后' },
+  { value: 2, label: '作者注释之前' },
+  { value: 3, label: '作者注释之后' },
+  { value: 4, label: '聊天深度' },
+  { value: 5, label: '示例消息之前' },
+  { value: 6, label: '示例消息之后' },
+  { value: 7, label: '命名提示出口' },
+] as const;
+
+const SELECTIVE_LOGIC_OPTIONS = [
+  { value: 0, label: '主关键词 + 任一辅助词' },
+  { value: 1, label: '主关键词 + 非全部辅助词' },
+  { value: 2, label: '主关键词 + 无任何辅助词' },
+  { value: 3, label: '主关键词 + 全部辅助词' },
+] as const;
+
+const ROLE_OPTIONS = [
+  { value: 0, label: 'System' },
+  { value: 1, label: 'User' },
+  { value: 2, label: 'Assistant' },
+] as const;
+
+const nullableNumber = (value: string): number | null => value === '' ? null : Number(value);
+
+const triStateValue = (value: boolean | null | undefined): string => value == null ? 'inherit' : String(value);
+
+const parseTriState = (value: string): boolean | null => value === 'inherit' ? null : value === 'true';
+
 export default function WorldBookEditor({ 
   stageResults = [], 
   currentStageMessages = [] 
 }: WorldBookEditorProps) {
-  const { entries, addEntry, updateEntry, deleteEntry } = useWorldBookStore();
-  const { generateResponse, loading } = useAIService();
+  const project = useProgressStore(state => state.getCurrentProject());
+  const entries = project?.worldBookEntries || [];
+  const bookMetadata = project?.bookMetadata || null;
+  const {
+    addWorldBookEntry,
+    updateWorldBookEntry,
+    deleteWorldBookEntry,
+    updateBookMetadata,
+  } = useProgressStore();
+  const { generateResponse, generateAuditResponse, loading } = useAIService();
   
   const [editingEntry, setEditingEntry] = useState<WorldBookEntry | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isAuditing, setIsAuditing] = useState(false);
   const [previewEntries, setPreviewEntries] = useState<Partial<WorldBookEntry>[]>([]);
+  const [previewIssues, setPreviewIssues] = useState<string[][]>([]);
+  const [previewMode, setPreviewMode] = useState<'generate' | 'audit'>('generate');
   const [showPreview, setShowPreview] = useState(false);
+  const [showBookSettings, setShowBookSettings] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [creatingUid, setCreatingUid] = useState<number | null>(null);
+
+  useEffect(() => {
+    setEditingEntry(null);
+    setPreviewEntries([]);
+    setPreviewIssues([]);
+    setPreviewMode('generate');
+    setShowPreview(false);
+    setShowBookSettings(false);
+    setShowAdvanced(false);
+    setCreatingUid(null);
+  }, [project?.id]);
 
   /**
    * 开始编辑条目
    */
   const handleEdit = (entry: WorldBookEntry) => {
     setEditingEntry({ ...entry });
+    setShowAdvanced(false);
+    setCreatingUid(null);
+  };
+
+  const handleAdd = () => {
+    const entry = addWorldBookEntry();
+    setEditingEntry({ ...entry });
+    setCreatingUid(entry.uid);
+    setShowAdvanced(false);
   };
 
   /**
@@ -40,8 +127,9 @@ export default function WorldBookEditor({
    */
   const handleSave = () => {
     if (editingEntry) {
-      updateEntry(editingEntry.uid, editingEntry);
+      updateWorldBookEntry(editingEntry.uid, editingEntry);
       setEditingEntry(null);
+      setCreatingUid(null);
     }
   };
 
@@ -49,7 +137,11 @@ export default function WorldBookEditor({
    * 取消编辑
    */
   const handleCancel = () => {
+    if (editingEntry && creatingUid === editingEntry.uid && !editingEntry.content.trim() && editingEntry.keys.length === 0) {
+      deleteWorldBookEntry(editingEntry.uid);
+    }
     setEditingEntry(null);
+    setCreatingUid(null);
   };
 
   /**
@@ -154,7 +246,7 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
    - 可选：重要事件（1个，如"海边之夜"）
    - 可选：Furry特征（如适用，1-2个，如信息素系统、肉垫细节）
    - 可选：游戏规则（如适用，1个）
-   - 可选：格式规范（通常不需要，依赖首条消息的正向循环）
+   - 可选：格式规范（需要每轮稳定输出状态栏时使用）
 
 3. **质量标准**：
    ✅ 多个关键词（中英文、别名、简称）
@@ -171,23 +263,17 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
 **严格按照以下格式**，每个条目之间用"---"分隔：
 
 【关键词】关键词1, 关键词2, 关键词3
-【类型】核心角色/外貌细节/背景故事/配角/地点/物品/规则
+【类型】核心角色/外貌细节/背景故事/配角/地点/物品/规则/格式规范
 【内容】
 详细描述...（50-150字）
 
 ---
 
-**类型说明（自动设置 cooldown/sticky）：**
-- 核心角色：主角的核心信息 → cooldown: 12, sticky: 3
-- 外貌细节：身体/外貌描写 → cooldown: 25
-- 背景故事：过去经历/深层动机 → cooldown: 40
-- 配角：其他角色 → cooldown: 15
-- 地点：场景/环境 → cooldown: 20
-- 物品：道具/装备 → cooldown: 30
-- 规则：游戏机制/特殊规则 → cooldown: 10, sticky: 5
-- **格式规范**：回复格式、状态栏格式 → cooldown: 50, sticky: 1（主要依赖首条消息的正向循环，此条目仅作为长对话的"保险"）
+**类型说明：**
+- 普通知识条目按关键词触发，不默认设置冷却，避免关键词仍在时知识突然消失。
+- **格式规范**会自动设为常驻、聊天深度 1、System 角色、忽略预算，并阻止其内容继续触发递归扫描，以便每轮稳定注入且不误触发其他关键词条目。
 
-**注意**：类型仅用于自动设置参数，请务必标注。
+**注意**：类型用于选择合理的运行时默认值，请务必标注。
 
 ---
 
@@ -283,8 +369,27 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
       const parsedEntries = parseAIGeneratedEntries(response);
       
       if (parsedEntries.length > 0) {
-        // 显示预览，让用户选择
-        setPreviewEntries(parsedEntries);
+        const generatedEntries = parsedEntries.map((entry, index) => ({
+          ...createDefaultWorldBookEntry(index),
+          ...entry,
+          uid: index,
+        }));
+        const auditResponse = await generateAuditResponse(
+          [{
+            role: 'user',
+            content: buildWorldBookAuditPrompt(
+              contextInfo,
+              dialogueInfo,
+              generatedEntries,
+            ),
+          }],
+          '你是独立的世界书审计 AI。逐条核对证据、关键词和 SillyTavern 运行参数，只返回指定 JSON。',
+        );
+        const auditedEntries = parseWorldBookAuditResponse(auditResponse, generatedEntries);
+        // 显示审计后的预览，让用户选择，原始生成结果不会直接写入项目。
+        setPreviewEntries(auditedEntries.map(candidate => candidate.entry));
+        setPreviewIssues(auditedEntries.map(candidate => candidate.issues));
+        setPreviewMode('generate');
         setShowPreview(true);
       } else {
         alert('AI 生成失败，请手动添加条目。');
@@ -297,6 +402,38 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
     }
   };
 
+  const handleAIAudit = async () => {
+    if (entries.length === 0 || isAuditing || loading) return;
+    setIsAuditing(true);
+    try {
+      const evidenceContext = stageResults
+        .slice(0, 7)
+        .map((result, index) => result?.trim() ? `### 阶段${index + 1}\n${result.trim()}` : '')
+        .filter(Boolean)
+        .join('\n\n');
+      const discussionRecord = currentStageMessages
+        .map(message => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`)
+        .join('\n\n');
+      const response = await generateAuditResponse(
+        [{
+          role: 'user',
+          content: buildWorldBookAuditPrompt(evidenceContext, discussionRecord, entries),
+        }],
+        '你是独立的世界书审计 AI。逐条核对证据、关键词和 SillyTavern 运行参数，只返回指定 JSON。',
+      );
+      const auditedEntries = parseWorldBookAuditResponse(response, entries);
+      setPreviewEntries(auditedEntries.map(candidate => candidate.entry));
+      setPreviewIssues(auditedEntries.map(candidate => candidate.issues));
+      setPreviewMode('audit');
+      setShowPreview(true);
+    } catch (error) {
+      console.error('AI审计世界书失败:', error);
+      alert(error instanceof Error ? `审计失败：${error.message}` : '审计失败，请检查 AI 设置后重试。');
+    } finally {
+      setIsAuditing(false);
+    }
+  };
+
   /**
    * 确认添加预览的条目
    */
@@ -304,30 +441,44 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
     selectedIndices.forEach(idx => {
       const entry = previewEntries[idx];
       if (entry) {
-        addEntry(entry);
+        if (previewMode === 'audit' && typeof entry.uid === 'number') {
+          updateWorldBookEntry(entry.uid, entry);
+        } else {
+          addWorldBookEntry(entry);
+        }
       }
     });
     setShowPreview(false);
     setPreviewEntries([]);
-    alert(`成功添加 ${selectedIndices.length} 个世界书条目！`);
+    setPreviewIssues([]);
+    alert(previewMode === 'audit'
+      ? `已应用 ${selectedIndices.length} 个审计修订候选。`
+      : `成功添加 ${selectedIndices.length} 个经过审计的世界书条目！`);
   };
 
   /**
    * 根据条目类型获取推荐参数
    */
-  const getTypeParams = (type: string): { cooldown: number | null; sticky: number | null } => {
-    const typeMap: Record<string, { cooldown: number; sticky: number | null }> = {
-      '核心角色': { cooldown: 12, sticky: 3 },
-      '外貌细节': { cooldown: 25, sticky: null },
-      '背景故事': { cooldown: 40, sticky: null },
-      '配角': { cooldown: 15, sticky: null },
-      '地点': { cooldown: 20, sticky: null },
-      '物品': { cooldown: 30, sticky: null },
-      '规则': { cooldown: 10, sticky: 5 },
-      '格式规范': { cooldown: 50, sticky: 1 },
+  const getTypeParams = (type: string): Partial<WorldBookEntry> => {
+    if (type === '格式规范') {
+      return {
+        constant: true,
+        position: 4,
+        depth: 1,
+        role: 0,
+        order: 900,
+        useProbability: false,
+        ignoreBudget: true,
+        preventRecursion: true,
+        cooldown: null,
+        sticky: null,
+      };
+    }
+
+    return {
+      cooldown: null,
+      sticky: null,
     };
-    
-    return typeMap[type] || { cooldown: 20, sticky: null };
   };
 
   /**
@@ -392,15 +543,14 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
       content = content.replace(/\n*要我[\s\S]*$/, '');
       
       if (keys.length > 0 && content) {
-        // 根据类型设置 cooldown/sticky
+        // 格式约束需要每轮注入；普通知识条目不应默认进入冷却。
         const params = getTypeParams(entryType);
         
         entries.push({
           keys,
           content,
           comment: entryType || keys[0], // 用类型或第一个关键词作为备注
-          cooldown: params.cooldown,
-          sticky: params.sticky,
+          ...params,
         });
       }
     }
@@ -418,20 +568,98 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
         <div className="flex space-x-2">
           <button
             onClick={handleAIGenerate}
-            disabled={isGenerating || loading}
+            disabled={isGenerating || isAuditing || loading}
             className="px-3 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Sparkles className="w-4 h-4 inline mr-1" />
             {isGenerating ? '生成中...' : 'AI生成'}
           </button>
           <button
-            onClick={() => addEntry()}
+            onClick={handleAIAudit}
+            disabled={entries.length === 0 || isGenerating || isAuditing || loading}
+            className="px-3 py-2 bg-cyan-700 text-white rounded-lg hover:bg-cyan-800 transition-colors text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            title="使用独立审计模型核对现有条目的证据、关键词和运行参数"
+          >
+            <ShieldCheck className="w-4 h-4 inline mr-1" />
+            {isAuditing ? '审计中...' : 'AI审计'}
+          </button>
+          <button
+            onClick={handleAdd}
             className="px-3 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm"
           >
             <Plus className="w-4 h-4 inline mr-1" />
             添加条目
           </button>
         </div>
+      </div>
+
+      <div className="mb-4 border border-slate-200 dark:border-slate-700 rounded-lg">
+        <button
+          type="button"
+          onClick={() => setShowBookSettings(value => !value)}
+          className="w-full flex items-center justify-between px-4 py-3 text-left text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/40"
+          aria-expanded={showBookSettings}
+        >
+          <span className="flex items-center gap-2">
+            <Settings2 className="w-4 h-4" />
+            世界书卡片元数据
+          </span>
+          {showBookSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        </button>
+        {showBookSettings && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-t border-slate-200 dark:border-slate-700 p-4">
+            <div className="md:col-span-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+              这些字段会写入 Character Card V3 的 character_book 元数据。SillyTavern 1.18 导入时会保留它们用于再次导出，但实际扫描深度、预算和递归开关仍由酒馆的账户级“世界书激活设置”决定。
+            </div>
+            <label className="text-sm text-slate-700 dark:text-slate-300">
+              <span className="block mb-1 font-medium">名称</span>
+              <input
+                type="text"
+                value={bookMetadata?.name || ''}
+                onChange={(event) => updateBookMetadata({ name: event.target.value })}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+              />
+            </label>
+            <label className="text-sm text-slate-700 dark:text-slate-300">
+              <span className="block mb-1 font-medium">卡片建议扫描深度</span>
+              <input
+                type="number"
+                min={0}
+                max={1000}
+                value={bookMetadata?.scan_depth ?? WORLDBOOK_DEFAULTS.DEFAULT_SCAN_DEPTH}
+                onChange={(event) => updateBookMetadata({ scan_depth: Number(event.target.value) })}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+              />
+            </label>
+            <label className="text-sm text-slate-700 dark:text-slate-300">
+              <span className="block mb-1 font-medium">卡片建议 Token 预算</span>
+              <input
+                type="number"
+                min={0}
+                value={bookMetadata?.token_budget ?? WORLDBOOK_DEFAULTS.DEFAULT_TOKEN_BUDGET}
+                onChange={(event) => updateBookMetadata({ token_budget: Number(event.target.value) })}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+              />
+            </label>
+            <label className="flex items-center gap-2 self-end pb-2 text-sm text-slate-700 dark:text-slate-300">
+              <input
+                type="checkbox"
+                checked={bookMetadata?.recursive_scanning ?? WORLDBOOK_DEFAULTS.DEFAULT_RECURSIVE_SCANNING}
+                onChange={(event) => updateBookMetadata({ recursive_scanning: event.target.checked })}
+              />
+              卡片递归扫描标记
+            </label>
+            <label className="md:col-span-2 text-sm text-slate-700 dark:text-slate-300">
+              <span className="block mb-1 font-medium">描述</span>
+              <textarea
+                rows={2}
+                value={bookMetadata?.description || ''}
+                onChange={(event) => updateBookMetadata({ description: event.target.value })}
+                className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+              />
+            </label>
+          </div>
+        )}
       </div>
 
       {/* 说明 */}
@@ -508,31 +736,266 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
                     />
                   </div>
 
-                  {/* 高级选项 */}
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="flex items-center text-sm text-slate-700 dark:text-slate-300">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label className="text-sm text-slate-700 dark:text-slate-300">
+                      <span className="block mb-1 font-medium">插入位置</span>
+                      <select
+                        value={editingEntry.position}
+                        onChange={(event) => updateEditingEntry({ position: Number(event.target.value) })}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                      >
+                        {POSITION_OPTIONS.map(option => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="text-sm text-slate-700 dark:text-slate-300">
+                      <span className="block mb-1 font-medium">插入顺序</span>
+                      <input
+                        type="number"
+                        value={editingEntry.order}
+                        onChange={(event) => updateEditingEntry({ order: Number(event.target.value) })}
+                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                      />
+                    </label>
+                    {editingEntry.position === 4 && (
+                      <>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">聊天深度</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={10000}
+                            value={editingEntry.depth ?? WORLDBOOK_DEFAULTS.DEFAULT_DEPTH}
+                            onChange={(event) => updateEditingEntry({ depth: Number(event.target.value) })}
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                          />
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">消息角色</span>
+                          <select
+                            value={editingEntry.role ?? 0}
+                            onChange={(event) => updateEditingEntry({ role: Number(event.target.value) })}
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                          >
+                            {ROLE_OPTIONS.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                      </>
+                    )}
+                    {editingEntry.position === 7 && (
+                      <label className="md:col-span-2 text-sm text-slate-700 dark:text-slate-300">
+                        <span className="block mb-1 font-medium">提示出口名称</span>
                         <input
-                          type="checkbox"
-                          checked={editingEntry.constant}
-                          onChange={(e) => updateEditingEntry({ constant: e.target.checked })}
-                          className="mr-2"
+                          type="text"
+                          value={editingEntry.outletName || ''}
+                          onChange={(event) => updateEditingEntry({ outletName: event.target.value })}
+                          className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
                         />
-                        永久激活（忽略关键词）
                       </label>
-                    </div>
-                    <div>
-                      <label className="flex items-center text-sm text-slate-700 dark:text-slate-300">
-                        <input
-                          type="checkbox"
-                          checked={editingEntry.enabled}
-                          onChange={(e) => updateEditingEntry({ enabled: e.target.checked })}
-                          className="mr-2"
-                        />
-                        启用
-                      </label>
-                    </div>
+                    )}
                   </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={editingEntry.enabled}
+                        onChange={(event) => updateEditingEntry({ enabled: event.target.checked })}
+                      />
+                      启用
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={editingEntry.constant}
+                        onChange={(event) => updateEditingEntry(event.target.checked
+                          ? { constant: true, preventRecursion: true }
+                          : { constant: false })}
+                      />
+                      常驻激活
+                    </label>
+                    <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={editingEntry.selective}
+                        onChange={(event) => updateEditingEntry({ selective: event.target.checked })}
+                      />
+                      使用辅助关键词逻辑
+                    </label>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvanced(value => !value)}
+                    className="w-full flex items-center justify-between border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700/40"
+                    aria-expanded={showAdvanced}
+                  >
+                    <span className="flex items-center gap-2">
+                      <Settings2 className="w-4 h-4" />
+                      SillyTavern 高级字段
+                    </span>
+                    {showAdvanced ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                  </button>
+
+                  {showAdvanced && (
+                    <div className="space-y-5 border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">辅助关键词（逗号分隔）</span>
+                          <input
+                            type="text"
+                            value={(editingEntry.keysecondary || []).join(', ')}
+                            onChange={(event) => updateEditingEntry({
+                              keysecondary: event.target.value.split(/[,，]/).map(key => key.trim()).filter(Boolean),
+                            })}
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                          />
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">辅助关键词逻辑</span>
+                          <select
+                            value={editingEntry.selectiveLogic ?? 0}
+                            onChange={(event) => updateEditingEntry({ selectiveLogic: Number(event.target.value) })}
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                          >
+                            {SELECTIVE_LOGIC_OPTIONS.map(option => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">条目扫描深度</span>
+                          <input
+                            type="number"
+                            min={0}
+                            max={1000}
+                            value={editingEntry.scanDepth ?? ''}
+                            placeholder="使用全局设置"
+                            onChange={(event) => updateEditingEntry({ scanDepth: nullableNumber(event.target.value) })}
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                          />
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">触发概率</span>
+                          <div className="flex items-center gap-3">
+                            <input
+                              type="checkbox"
+                              checked={editingEntry.useProbability ?? true}
+                              onChange={(event) => updateEditingEntry({ useProbability: event.target.checked })}
+                              aria-label="启用触发概率"
+                            />
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              disabled={!(editingEntry.useProbability ?? true)}
+                              value={editingEntry.probability ?? WORLDBOOK_DEFAULTS.DEFAULT_PROBABILITY}
+                              onChange={(event) => updateEditingEntry({ probability: Number(event.target.value) })}
+                              className="min-w-0 flex-1 px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white disabled:opacity-50"
+                            />
+                          </div>
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">大小写匹配</span>
+                          <select
+                            value={triStateValue(editingEntry.caseSensitive)}
+                            onChange={(event) => updateEditingEntry({ caseSensitive: parseTriState(event.target.value) })}
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                          >
+                            <option value="inherit">继承全局</option>
+                            <option value="true">区分</option>
+                            <option value="false">不区分</option>
+                          </select>
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">整词匹配</span>
+                          <select
+                            value={triStateValue(editingEntry.matchWholeWords)}
+                            onChange={(event) => updateEditingEntry({ matchWholeWords: parseTriState(event.target.value) })}
+                            className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
+                          >
+                            <option value="inherit">继承全局</option>
+                            <option value="true">启用</option>
+                            <option value="false">禁用</option>
+                          </select>
+                        </label>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">黏性轮数</span>
+                          <input type="number" min={0} value={editingEntry.sticky ?? ''} onChange={(event) => updateEditingEntry({ sticky: nullableNumber(event.target.value) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">冷却轮数</span>
+                          <input type="number" min={0} value={editingEntry.cooldown ?? ''} onChange={(event) => updateEditingEntry({ cooldown: nullableNumber(event.target.value) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">聊天延迟轮数</span>
+                          <input type="number" min={0} value={editingEntry.delay ?? ''} onChange={(event) => updateEditingEntry({ delay: nullableNumber(event.target.value) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">延迟到递归层级</span>
+                          <input type="number" min={0} value={editingEntry.delayUntilRecursion || 0} onChange={(event) => updateEditingEntry({ delayUntilRecursion: Number(event.target.value) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">包含组</span>
+                          <input type="text" value={editingEntry.group || ''} onChange={(event) => updateEditingEntry({ group: event.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">组权重</span>
+                          <input type="number" min={0} value={editingEntry.groupWeight ?? WORLDBOOK_DEFAULTS.DEFAULT_WEIGHT} onChange={(event) => updateEditingEntry({ groupWeight: Number(event.target.value) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
+                        </label>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-sm text-slate-700 dark:text-slate-300">
+                        {[
+                          ['excludeRecursion', '不在递归扫描中触发'],
+                          ['preventRecursion', '不触发其他递归条目'],
+                          ['groupOverride', '组内优先覆盖'],
+                          ['vectorized', '向量化匹配'],
+                          ['ignoreBudget', '忽略世界书预算'],
+                          ['matchPersonaDescription', '扫描用户人设'],
+                          ['matchCharacterDescription', '扫描角色描述'],
+                          ['matchCharacterPersonality', '扫描角色性格'],
+                          ['matchCharacterDepthPrompt', '扫描角色深度提示'],
+                          ['matchScenario', '扫描场景'],
+                          ['matchCreatorNotes', '扫描创作者备注'],
+                        ].map(([field, label]) => (
+                          <label key={field} className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={Boolean(editingEntry[field as keyof WorldBookEntry])}
+                              onChange={(event) => updateEditingEntry({ [field]: event.target.checked })}
+                            />
+                            {label}
+                          </label>
+                        ))}
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">组评分</span>
+                          <select value={triStateValue(editingEntry.useGroupScoring)} onChange={(event) => updateEditingEntry({ useGroupScoring: parseTriState(event.target.value) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white">
+                            <option value="inherit">继承全局</option>
+                            <option value="true">启用</option>
+                            <option value="false">禁用</option>
+                          </select>
+                        </label>
+                        <label className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">生成类型触发器（逗号分隔）</span>
+                          <input type="text" value={(editingEntry.triggers || []).join(', ')} onChange={(event) => updateEditingEntry({ triggers: event.target.value.split(/[,，]/).map(value => value.trim()).filter(Boolean) })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
+                        </label>
+                        <label className="md:col-span-2 text-sm text-slate-700 dark:text-slate-300">
+                          <span className="block mb-1 font-medium">自动化 ID</span>
+                          <input type="text" value={editingEntry.automationId || ''} onChange={(event) => updateEditingEntry({ automationId: event.target.value })} className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white" />
+                        </label>
+                      </div>
+                    </div>
+                  )}
 
                   {/* 按钮 */}
                   <div className="flex space-x-2 justify-end">
@@ -587,6 +1050,8 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
                     <div className="flex space-x-1">
                       <button
                         onClick={() => handleEdit(entry)}
+                        aria-label={`编辑世界书条目 ${entry.comment || entry.uid}`}
+                        title="编辑条目"
                         className="p-1.5 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
                       >
                         <Edit2 className="w-4 h-4" />
@@ -594,9 +1059,11 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
                       <button
                         onClick={() => {
                           if (confirm('确定要删除这个条目吗？')) {
-                            deleteEntry(entry.uid);
+                            deleteWorldBookEntry(entry.uid);
                           }
                         }}
+                        aria-label={`删除世界书条目 ${entry.comment || entry.uid}`}
+                        title="删除条目"
                         className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-colors"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -608,6 +1075,16 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
                   <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap">
                     {entry.content || '（无内容）'}
                   </p>
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs text-slate-500 dark:text-slate-400">
+                    <span>位置：{POSITION_OPTIONS.find(option => option.value === entry.position)?.label || entry.position}</span>
+                    <span>顺序：{entry.order}</span>
+                    {entry.position === 4 && <span>深度：{entry.depth ?? WORLDBOOK_DEFAULTS.DEFAULT_DEPTH}</span>}
+                    {entry.scanDepth != null && <span>扫描：{entry.scanDepth}</span>}
+                    {entry.keysecondary && entry.keysecondary.length > 0 && <span>辅助词：{entry.keysecondary.length}</span>}
+                    {entry.sticky != null && <span>黏性：{entry.sticky}</span>}
+                    {entry.cooldown != null && <span>冷却：{entry.cooldown}</span>}
+                    {entry.delay != null && <span>延迟：{entry.delay}</span>}
+                  </div>
                 </div>
               )}
             </div>
@@ -619,10 +1096,13 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
       {showPreview && (
         <PreviewDialog
           entries={previewEntries}
+          issues={previewIssues}
+          mode={previewMode}
           onConfirm={handleConfirmPreview}
           onCancel={() => {
             setShowPreview(false);
             setPreviewEntries([]);
+            setPreviewIssues([]);
           }}
         />
       )}
@@ -635,10 +1115,14 @@ ${dialogueInfo ? '⚠️ 特别注意：优先满足阶段7讨论中用户提出
  */
 function PreviewDialog({
   entries,
+  issues,
+  mode,
   onConfirm,
   onCancel,
 }: {
   entries: Partial<WorldBookEntry>[];
+  issues: string[][];
+  mode: 'generate' | 'audit';
   onConfirm: (selectedIndices: number[]) => void;
   onCancel: () => void;
 }) {
@@ -668,10 +1152,12 @@ function PreviewDialog({
           <div>
             <h2 className="text-xl font-bold text-white flex items-center">
               <Sparkles className="w-5 h-5 mr-2" />
-              AI 生成结果预览
+              {mode === 'audit' ? '世界书审计候选预览' : 'AI 生成与审计结果预览'}
             </h2>
             <p className="text-sm text-indigo-100 mt-1">
-              请勾选要添加的条目（已默认全选）
+              {mode === 'audit'
+                ? '只有勾选并确认的修订才会覆盖对应条目'
+                : '条目已经过独立审计，请勾选要添加的内容'}
             </p>
           </div>
           <button
@@ -726,6 +1212,14 @@ function PreviewDialog({
                     <p className="text-sm text-slate-700 dark:text-slate-300 whitespace-pre-wrap mb-2">
                       {entry.content}
                     </p>
+                    {(issues[idx]?.length || 0) > 0 && (
+                      <div className="mb-2 rounded border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+                        <div className="font-semibold mb-1">审计提醒</div>
+                        {(issues[idx] || []).map((issue, issueIndex) => (
+                          <div key={issueIndex}>- {issue}</div>
+                        ))}
+                      </div>
+                    )}
                     {(entry.cooldown || entry.sticky) && (
                       <div className="text-xs text-slate-500 dark:text-slate-400 flex gap-2">
                         {entry.cooldown && (
@@ -761,7 +1255,7 @@ function PreviewDialog({
               className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Check className="w-4 h-4" />
-              <span>添加选中的条目</span>
+              <span>{mode === 'audit' ? '应用选中的修订' : '添加选中的条目'}</span>
             </button>
           </div>
         </div>
@@ -769,4 +1263,3 @@ function PreviewDialog({
     </div>
   );
 }
-

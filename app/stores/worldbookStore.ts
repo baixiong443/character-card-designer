@@ -1,15 +1,24 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { WorldBookEntry, createDefaultWorldBookEntry } from '@/types/worldbook';
+import {
+  CharacterBook,
+  WorldBookEntry,
+  convertFromCharacterBookEntry,
+  createDefaultWorldBookEntry,
+} from '@/types/worldbook';
+
+type CharacterBookMetadata = Omit<CharacterBook, 'entries'>;
 
 interface WorldBookState {
   entries: WorldBookEntry[];
+  bookMetadata: CharacterBookMetadata | null;
   addEntry: (entry?: Partial<WorldBookEntry>) => WorldBookEntry;
   updateEntry: (uid: number, updates: Partial<WorldBookEntry>) => void;
   deleteEntry: (uid: number) => void;
   getEntry: (uid: number) => WorldBookEntry | undefined;
   clearAllEntries: () => void;
   importEntries: (entries: WorldBookEntry[]) => void;
+  importCharacterBook: (book: CharacterBook) => void;
 }
 
 /**
@@ -19,6 +28,7 @@ export const useWorldBookStore = create<WorldBookState>()(
   persist(
     (set, get) => ({
       entries: [],
+      bookMetadata: null,
 
       /**
        * 添加新条目
@@ -70,7 +80,7 @@ export const useWorldBookStore = create<WorldBookState>()(
        * 清空所有条目
        */
       clearAllEntries: () => {
-        set({ entries: [] });
+        set({ entries: [], bookMetadata: null });
       },
 
       /**
@@ -78,6 +88,14 @@ export const useWorldBookStore = create<WorldBookState>()(
        */
       importEntries: (entries) => {
         set({ entries });
+      },
+
+      importCharacterBook: (book) => {
+        const { entries, ...metadata } = book;
+        set({
+          entries: entries.map((entry, index) => convertFromCharacterBookEntry(entry, index)),
+          bookMetadata: JSON.parse(JSON.stringify(metadata)),
+        });
       },
     }),
     {

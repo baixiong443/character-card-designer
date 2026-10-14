@@ -1,50 +1,19 @@
 'use client';
 
+/* eslint-disable @typescript-eslint/no-explicit-any, react/no-unescaped-entities -- Imported cards and AI payloads are schema-flexible. */
+
 import { useState } from 'react';
-import { X, Upload, FileJson, Loader, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { X, Upload, FileJson, Loader, AlertCircle, CheckCircle, Info, ClipboardPaste } from 'lucide-react';
 import { useAIService } from '@/services/aiService';
-import { useWorldBookStore } from '@/stores/worldbookStore';
-import { convertFromCharacterBookEntry } from '@/types/worldbook';
+import { useProgressStore } from '@/stores/progressStore';
+import {
+  normalizeCharacterCard,
+  readCharacterCardFromPng,
+} from '@/lib/characterCard';
 
 interface ImportCardDialogProps {
   onClose: () => void;
   onImportComplete: (stageResults: string[]) => void;
-}
-
-// Character Card V3 接口定义
-interface CharacterCardV3 {
-  spec: string;
-  spec_version: string;
-  data: {
-    name: string;
-    description: string;
-    personality: string;
-    scenario: string;
-    first_mes: string;
-    mes_example: string;
-    creator_notes?: string;
-    system_prompt?: string;
-    post_history_instructions?: string;
-    tags?: string[];
-    creator?: string;
-    character_version?: string;
-    alternate_greetings?: string[];
-    extensions?: {
-      psyche_extensions?: any;
-      [key: string]: any;
-    };
-  };
-}
-
-// Character Card V2 接口定义
-interface CharacterCardV2 {
-  name: string;
-  description: string;
-  personality: string;
-  scenario: string;
-  first_mes: string;
-  mes_example: string;
-  [key: string]: any;
 }
 
 export default function ImportCardDialog({ onClose, onImportComplete }: ImportCardDialogProps) {
@@ -52,8 +21,66 @@ export default function ImportCardDialog({ onClose, onImportComplete }: ImportCa
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [cardInfo, setCardInfo] = useState<string>('');
+  const [showJsonPaste, setShowJsonPaste] = useState(false);
+  const [pastedJson, setPastedJson] = useState('');
   const { generateResponse } = useAIService();
-  const { importEntries } = useWorldBookStore();
+  const { loadImportedCard } = useProgressStore();
+
+  const fileToDataUrl = (file: File): Promise<string> => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(new Error('无法读取 PNG 图片'));
+    reader.readAsDataURL(file);
+  });
+
+  const importCardData = async (
+    cardData: any,
+    options: {
+      isPng?: boolean;
+      sourceImageDataUrl?: string;
+      pngMetadataKeyword?: 'chara' | 'ccv3';
+    } = {},
+  ) => {
+    const normalized = normalizeCharacterCard(cardData, {
+      sourceFormat: options.isPng ? 'png' : 'json',
+      sourceImageDataUrl: options.sourceImageDataUrl,
+      pngMetadataKeyword: options.pngMetadataKeyword,
+    });
+    loadImportedCard(normalized);
+
+    const name = normalized.character.name || '未知';
+    const version = normalized.envelope.sourceSpecVersion || normalized.envelope.sourceSpec;
+    const worldBookCount = normalized.characterBook?.entries?.length || 0;
+    const hasTimeline = Boolean(normalized.psycheTimeline?.plan);
+    setCardInfo(
+      `已识别角色卡：${name} (${version})`
+      + `${options.isPng ? `，PNG 元数据：${options.pngMetadataKeyword}` : ''}`
+      + `${worldBookCount > 0 ? `，包含 ${worldBookCount} 个世界书条目` : ''}`
+      + `${hasTimeline ? `，包含 ${normalized.psycheTimeline!.plan!.events.length} 个 PTE 事件` : ''}`
+      + `${normalized.warnings.length > 0 ? `，${normalized.warnings.join('；')}` : ''}`
+      + `${hasTimeline ? '。正在按结构化字段导入...' : '。正在使用 AI 智能分析...'}`,
+    );
+
+    const originalData = cardData.data && typeof cardData.data === 'object' ? cardData.data : cardData;
+    const analysisCard = {
+      spec: 'chara_card_v3',
+      spec_version: '3.0',
+      data: {
+        ...originalData,
+        ...normalized.character,
+        character_book: normalized.characterBook,
+      },
+    };
+    const stageResults = hasTimeline
+      ? parseCharacterCard(analysisCard)
+      : await parseCharacterCardWithAI(analysisCard);
+
+    setSuccess(true);
+    setTimeout(() => {
+      onImportComplete(stageResults);
+      onClose();
+    }, hasTimeline ? 500 : 1500);
+  };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -64,56 +91,44 @@ export default function ImportCardDialog({ onClose, onImportComplete }: ImportCa
     setCardInfo('');
 
     try {
-      const text = await file.text();
       let cardData: any;
+      let sourceImageDataUrl: string | undefined;
+      let pngMetadataKeyword: 'chara' | 'ccv3' | undefined;
+      const isPng = file.type === 'image/png' || file.name.toLowerCase().endsWith('.png');
 
-      // 尝试解析JSON
-      try {
-        cardData = JSON.parse(text);
-      } catch (parseError) {
-        // 如果是PNG文件，尝试从PNG中提取JSON（SillyTavern格式）
-        if (file.type === 'image/png') {
-          setError('PNG格式的角色卡需要先转换为JSON格式。请使用SillyTavern的导出功能选择"JSON"格式。');
-          setIsProcessing(false);
-          return;
-        }
-        throw new Error('无效的JSON格式');
-      }
-
-      // 显示角色卡信息
-      const name = cardData.data?.name || cardData.name || '未知';
-      const version = cardData.spec_version || (cardData.spec ? 'V3' : 'V2');
-      
-      // 检查是否有世界书
-      const characterBook = cardData.data?.character_book || cardData.character_book;
-      const worldBookCount = characterBook?.entries?.length || 0;
-      
-      setCardInfo(`已识别角色卡：${name} (${version})${worldBookCount > 0 ? `，包含${worldBookCount}个世界书条目` : ''}，正在使用AI智能分析...`);
-
-      // 导入世界书条目（如果有）
-      if (worldBookCount > 0) {
+      if (isPng) {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const parsed = readCharacterCardFromPng(bytes);
+        cardData = parsed.card;
+        pngMetadataKeyword = parsed.keyword;
+        sourceImageDataUrl = await fileToDataUrl(file);
+      } else {
         try {
-          const worldBookEntries = characterBook.entries.map((entry: any) => 
-            convertFromCharacterBookEntry(entry)
-          );
-          importEntries(worldBookEntries);
-          console.log(`成功导入 ${worldBookEntries.length} 个世界书条目`);
-        } catch (wbError) {
-          console.warn('世界书导入失败:', wbError);
+          cardData = JSON.parse(await file.text());
+        } catch {
+          throw new Error('无效的 JSON 角色卡文件');
         }
       }
 
-      // 使用AI智能分析角色卡内容
-      const stageResults = await parseCharacterCardWithAI(cardData);
-      
-      setSuccess(true);
-      setTimeout(() => {
-        onImportComplete(stageResults);
-        onClose();
-      }, 1500);
+      await importCardData(cardData, { isPng, sourceImageDataUrl, pngMetadataKeyword });
     } catch (error: any) {
       console.error('解析角色卡失败:', error);
       setError(error.message || '解析失败，请确保上传的是有效的Character Card JSON文件');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleJsonPaste = async () => {
+    if (!pastedJson.trim() || isProcessing) return;
+    setIsProcessing(true);
+    setError('');
+    setCardInfo('');
+    try {
+      await importCardData(JSON.parse(pastedJson));
+    } catch (error: any) {
+      console.error('解析粘贴的角色卡失败:', error);
+      setError(error instanceof SyntaxError ? '粘贴内容不是有效 JSON' : error.message || '角色卡导入失败');
     } finally {
       setIsProcessing(false);
     }
@@ -218,7 +233,7 @@ ${JSON.stringify(allContent, null, 2)}
 
     // 判断是V2还是V3格式
     const isV3 = cardData.spec === 'chara_card_v3' || cardData.spec_version === '3.0';
-    const data = isV3 ? (cardData as CharacterCardV3).data : (cardData as CharacterCardV2);
+    const data = cardData.data || cardData;
 
     // 阶段1：基础身份
     const stage1Parts: string[] = [];
@@ -402,7 +417,7 @@ ${JSON.stringify(allContent, null, 2)}
                 功能说明：
               </p>
               <ul className="space-y-1 text-xs">
-                <li>• 上传现有的角色卡JSON文件（V2或V3格式）</li>
+                <li>• 上传角色卡 JSON（V1/V2/V3）或 SillyTavern PNG Card</li>
                 <li>• <strong>AI智能分析</strong>：自动识别混乱的description字段，智能分类到各阶段</li>
                 <li>• 支持任意结构的角色卡，不要求严格格式</li>
                 <li>• 缺失的内容会自动标注"【需要补充】"</li>
@@ -424,11 +439,11 @@ ${JSON.stringify(allContent, null, 2)}
               </div>
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-4 h-4 text-green-600" />
-                <span className="text-slate-600 dark:text-slate-400">Character Card V2 (.json)</span>
+                <span className="text-slate-600 dark:text-slate-400">Character Card V1/V2 (.json)</span>
               </div>
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-4 h-4 text-green-600" />
-                <span className="text-slate-600 dark:text-slate-400">SillyTavern 格式</span>
+                <span className="text-slate-600 dark:text-slate-400">SillyTavern PNG (chara/ccv3)</span>
               </div>
               <div className="flex items-center space-x-2">
                 <CheckCircle className="w-4 h-4 text-green-600" />
@@ -441,7 +456,7 @@ ${JSON.stringify(allContent, null, 2)}
           <div className="border-2 border-dashed border-slate-300 dark:border-slate-600 rounded-lg p-8 text-center hover:border-indigo-500 dark:hover:border-indigo-400 transition-colors">
             <input
               type="file"
-              accept=".json"
+              accept=".json,.png,application/json,image/png"
               onChange={handleFileUpload}
               className="hidden"
               id="card-file-upload"
@@ -462,11 +477,47 @@ ${JSON.stringify(allContent, null, 2)}
                     {isProcessing ? '正在解析角色卡...' : '点击上传角色卡文件'}
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                    支持 .json 格式（V2/V3）
+                    支持 JSON（V1/V2/V3）与 PNG Card
                   </p>
                 </div>
               </div>
             </label>
+          </div>
+
+          <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-4">
+            <button
+              type="button"
+              onClick={() => setShowJsonPaste(value => !value)}
+              disabled={isProcessing}
+              className="w-full flex items-center justify-between text-sm font-medium text-slate-700 dark:text-slate-300 disabled:opacity-50"
+            >
+              <span className="flex items-center gap-2">
+                <ClipboardPaste className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                粘贴角色卡 JSON
+              </span>
+              <span className="text-xs text-slate-500">{showJsonPaste ? '收起' : '展开'}</span>
+            </button>
+            {showJsonPaste && (
+              <div className="mt-3 space-y-3">
+                <textarea
+                  value={pastedJson}
+                  onChange={event => setPastedJson(event.target.value)}
+                  placeholder="粘贴完整的 Character Card V1、V2 或 V3 JSON"
+                  rows={8}
+                  disabled={isProcessing}
+                  className="w-full resize-y rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 px-3 py-2 font-mono text-xs text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleJsonPaste()}
+                  disabled={isProcessing || !pastedJson.trim()}
+                  className="w-full flex items-center justify-center gap-2 rounded bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isProcessing ? <Loader className="w-4 h-4 animate-spin" /> : <ClipboardPaste className="w-4 h-4" />}
+                  解析并导入
+                </button>
+              </div>
+            )}
           </div>
 
           {/* 角色卡信息 */}
@@ -484,7 +535,7 @@ ${JSON.stringify(allContent, null, 2)}
               <div className="flex-1">
                 <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
                 <p className="text-xs text-red-600 dark:text-red-400 mt-2">
-                  提示：如果是PNG格式，请在SillyTavern中导出为JSON格式
+                  支持 SillyTavern 的 chara / ccv3 PNG 元数据；ccv3 优先
                 </p>
               </div>
             </div>
@@ -525,4 +576,3 @@ ${JSON.stringify(allContent, null, 2)}
     </div>
   );
 }
-

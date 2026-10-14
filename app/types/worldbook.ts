@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Lorebook extensions are an open third-party namespace. */
 /**
  * World Book / Lorebook Types
  * Based on SillyTavern Character Card V3 specification
@@ -55,6 +56,19 @@ export interface WorldBookEntry {
   role?: number;                  // 角色类型
   vectorized?: boolean;           // 向量化搜索
   automationId?: string;          // 自动化ID
+  outletName?: string;            // 命名提示出口
+  triggers?: string[];             // 触发器列表
+  ignoreBudget?: boolean;          // 忽略世界书预算
+  matchPersonaDescription?: boolean;
+  matchCharacterDescription?: boolean;
+  matchCharacterPersonality?: boolean;
+  matchCharacterDepthPrompt?: boolean;
+  matchScenario?: boolean;
+  matchCreatorNotes?: boolean;
+
+  // 原始数据保真：编辑器未识别的第三方字段仍在导出时保留
+  source?: Record<string, any>;
+  extensions?: Record<string, any>;
 }
 
 /**
@@ -82,7 +96,7 @@ export interface CharacterBook {
  * Character Card V3 条目格式（导出时使用）
  */
 export interface CharacterBookEntry {
-  id: number;                     // 条目ID
+  id?: number;                    // 条目ID
   keys: string[];                 // 主关键词
   secondary_keys?: string[];      // 备用关键词
   comment?: string;               // 备注
@@ -93,7 +107,7 @@ export interface CharacterBookEntry {
   enabled: boolean;               // 是否启用
   position: string;               // 插入位置
   use_regex?: boolean;            // 使用正则表达式
-  extensions: {
+  extensions: Record<string, any> & {
     position?: number;
     exclude_recursion?: boolean;
     display_index?: number;
@@ -105,7 +119,7 @@ export interface CharacterBookEntry {
     group_override?: boolean;
     group_weight?: number;
     prevent_recursion?: boolean;
-    delay_until_recursion?: boolean;
+    delay_until_recursion?: boolean | number;
     scan_depth?: number | null;
     match_whole_words?: boolean | null;
     use_group_scoring?: boolean | null;
@@ -117,6 +131,7 @@ export interface CharacterBookEntry {
     cooldown?: number | null;
     delay?: number | null;
   };
+  [key: string]: any;
 }
 
 /**
@@ -171,6 +186,17 @@ export function createDefaultWorldBookEntry(uid: number): WorldBookEntry {
     role: 0,
     vectorized: false,
     automationId: '',
+    outletName: '',
+    triggers: [],
+    ignoreBudget: false,
+    matchPersonaDescription: false,
+    matchCharacterDescription: false,
+    matchCharacterPersonality: false,
+    matchCharacterDepthPrompt: false,
+    matchScenario: false,
+    matchCreatorNotes: false,
+    source: undefined,
+    extensions: {},
   };
 }
 
@@ -184,7 +210,13 @@ export function convertToCharacterBookEntry(entry: WorldBookEntry): CharacterBoo
     1: 'after_char',
   };
 
+  const source = entry.source ? JSON.parse(JSON.stringify(entry.source)) : {};
+  const sourceExtensions = entry.extensions
+    ? JSON.parse(JSON.stringify(entry.extensions))
+    : (source.extensions && typeof source.extensions === 'object' ? source.extensions : {});
+
   return {
+    ...source,
     id: entry.uid,
     keys: entry.keys,
     secondary_keys: entry.keysecondary || [],
@@ -195,30 +227,40 @@ export function convertToCharacterBookEntry(entry: WorldBookEntry): CharacterBoo
     insertion_order: entry.order,
     enabled: entry.enabled,
     position: positionMap[entry.position] || 'after_char',
-    use_regex: false, // 暂不支持正则
+    use_regex: source.use_regex ?? false,
     extensions: {
+      ...sourceExtensions,
       position: entry.position,
-      exclude_recursion: entry.excludeRecursion || false,
-      display_index: entry.uid,
-      probability: entry.probability || WORLDBOOK_DEFAULTS.DEFAULT_PROBABILITY,
+      exclude_recursion: entry.excludeRecursion ?? false,
+      display_index: sourceExtensions.display_index ?? entry.uid,
+      probability: entry.probability ?? WORLDBOOK_DEFAULTS.DEFAULT_PROBABILITY,
       useProbability: entry.useProbability ?? true,
-      depth: entry.depth || WORLDBOOK_DEFAULTS.DEFAULT_DEPTH,
-      selectiveLogic: entry.selectiveLogic || 0,
-      group: entry.group || '',
-      group_override: entry.groupOverride || false,
-      group_weight: entry.groupWeight || WORLDBOOK_DEFAULTS.DEFAULT_WEIGHT,
-      prevent_recursion: entry.preventRecursion || false,
-      delay_until_recursion: !!entry.delayUntilRecursion,
+      depth: entry.depth ?? WORLDBOOK_DEFAULTS.DEFAULT_DEPTH,
+      selectiveLogic: entry.selectiveLogic ?? 0,
+      outlet_name: entry.outletName ?? '',
+      group: entry.group ?? '',
+      group_override: entry.groupOverride ?? false,
+      group_weight: entry.groupWeight ?? WORLDBOOK_DEFAULTS.DEFAULT_WEIGHT,
+      prevent_recursion: entry.preventRecursion ?? false,
+      delay_until_recursion: entry.delayUntilRecursion || false,
       scan_depth: entry.scanDepth ?? null,
       match_whole_words: entry.matchWholeWords ?? null,
       use_group_scoring: entry.useGroupScoring ?? null,
       case_sensitive: entry.caseSensitive ?? null,
-      automation_id: entry.automationId || '',
-      role: entry.role || 0,
-      vectorized: entry.vectorized || false,
-      sticky: entry.sticky ?? 0,
-      cooldown: entry.cooldown ?? 0,
-      delay: entry.delay ?? 0,
+      automation_id: entry.automationId ?? '',
+      role: entry.role ?? 0,
+      vectorized: entry.vectorized ?? false,
+      sticky: entry.sticky ?? null,
+      cooldown: entry.cooldown ?? null,
+      delay: entry.delay ?? null,
+      triggers: entry.triggers ?? [],
+      ignore_budget: entry.ignoreBudget ?? false,
+      match_persona_description: entry.matchPersonaDescription ?? false,
+      match_character_description: entry.matchCharacterDescription ?? false,
+      match_character_personality: entry.matchCharacterPersonality ?? false,
+      match_character_depth_prompt: entry.matchCharacterDepthPrompt ?? false,
+      match_scenario: entry.matchScenario ?? false,
+      match_creator_notes: entry.matchCreatorNotes ?? false,
     },
   };
 }
@@ -226,7 +268,7 @@ export function convertToCharacterBookEntry(entry: WorldBookEntry): CharacterBoo
 /**
  * 将 Character Card V3 格式转换为内部格式
  */
-export function convertFromCharacterBookEntry(entry: CharacterBookEntry): WorldBookEntry {
+export function convertFromCharacterBookEntry(entry: CharacterBookEntry, fallbackUid = 0): WorldBookEntry {
   // position 映射：反向
   const positionMap: Record<string, number> = {
     'before_char': 0,
@@ -234,14 +276,14 @@ export function convertFromCharacterBookEntry(entry: CharacterBookEntry): WorldB
   };
 
   return {
-    uid: entry.id,
+    uid: entry.id ?? fallbackUid,
     keys: entry.keys || [],
     content: entry.content || '',
     enabled: entry.enabled ?? true,
     constant: entry.constant ?? false,
     selective: entry.selective ?? true,
     order: entry.insertion_order ?? WORLDBOOK_DEFAULTS.DEFAULT_ORDER,
-    position: positionMap[entry.position] ?? WORLDBOOK_DEFAULTS.DEFAULT_POSITION,
+    position: entry.extensions?.position ?? positionMap[entry.position] ?? WORLDBOOK_DEFAULTS.DEFAULT_POSITION,
     comment: entry.comment,
     keysecondary: entry.secondary_keys,
     depth: entry.extensions?.depth,
@@ -253,7 +295,9 @@ export function convertFromCharacterBookEntry(entry: CharacterBookEntry): WorldB
     selectiveLogic: entry.extensions?.selectiveLogic,
     excludeRecursion: entry.extensions?.exclude_recursion,
     preventRecursion: entry.extensions?.prevent_recursion,
-    delayUntilRecursion: entry.extensions?.delay_until_recursion ? 1 : 0,
+    delayUntilRecursion: typeof entry.extensions?.delay_until_recursion === 'number'
+      ? entry.extensions.delay_until_recursion
+      : entry.extensions?.delay_until_recursion ? 1 : 0,
     group: entry.extensions?.group,
     groupOverride: entry.extensions?.group_override,
     groupWeight: entry.extensions?.group_weight,
@@ -264,6 +308,17 @@ export function convertFromCharacterBookEntry(entry: CharacterBookEntry): WorldB
     role: entry.extensions?.role,
     vectorized: entry.extensions?.vectorized,
     automationId: entry.extensions?.automation_id,
+    outletName: entry.extensions?.outlet_name,
+    triggers: entry.extensions?.triggers,
+    ignoreBudget: entry.extensions?.ignore_budget,
+    matchPersonaDescription: entry.extensions?.match_persona_description,
+    matchCharacterDescription: entry.extensions?.match_character_description,
+    matchCharacterPersonality: entry.extensions?.match_character_personality,
+    matchCharacterDepthPrompt: entry.extensions?.match_character_depth_prompt,
+    matchScenario: entry.extensions?.match_scenario,
+    matchCreatorNotes: entry.extensions?.match_creator_notes,
+    source: JSON.parse(JSON.stringify(entry)),
+    extensions: entry.extensions ? JSON.parse(JSON.stringify(entry.extensions)) : {},
   };
 }
 

@@ -1,12 +1,70 @@
 'use client';
 
 import { useState, useRef, useEffect } from 'react';
-import { X, Upload, FileText, Loader, AlertCircle, CheckCircle, MessageSquare, Send, Sparkles, ArrowRight, BookOpen, Play } from 'lucide-react';
+import { X, Upload, FileText, Loader, AlertCircle, CheckCircle, MessageSquare, Send, Sparkles, ArrowRight, Play } from 'lucide-react';
 import { useAIService } from '@/services/aiService';
+import {
+  AUDIT_PIPELINE_VERSION,
+  IMPORT_STAGE_SPECS,
+  EVIDENCE_FIDELITY_RULES,
+  EVIDENCE_CONTEXT_MAX,
+  LONG_TEXT_THRESHOLD,
+  PLOT_TRAJECTORY_SPEC,
+  buildChunkEvidencePrompt,
+  buildChunkEvidenceReviewPrompt,
+  buildEvidenceBlocks,
+  buildEvidenceMergePrompt,
+  buildNarrativeAuditPrompt,
+  buildStageAuditPrompt,
+  buildStageGenerationPrompt,
+  fingerprintText,
+  findEvidenceFidelityViolations,
+  groupTextBlocks,
+  loadLongTextCheckpoint,
+  isFormalStorylineConclusion,
+  matchesExactWorkflowCommand,
+  parseAuditedResult,
+  parseChunkEvidence,
+  parseMarkedEvidence,
+  parseStageResult,
+  saveLongTextCheckpoint,
+  splitSourceText,
+  type ChunkEvidence,
+  type ImportStageSpec,
+  type LongTextImportCheckpoint,
+  type SourceChunk,
+} from '@/lib/longTextImport';
+import {
+  buildPsycheTimelineAuditPrompt,
+  buildPsycheTimelineCompilationPrompt,
+  parsePsycheTimelineResponse,
+  type PsycheTimelineCompilationInput,
+  type PsycheTimelineProjectState,
+} from '@/lib/psycheTimeline';
+import {
+  buildStorySourceCorpus,
+  type SourcePreparationMode,
+  type StorySourceLibraryRef,
+} from '@/lib/storySource';
+import { putStorySourceCorpus } from '@/lib/storySourceDb';
+import {
+  initialEvidenceChunkCount,
+  mergeReviewedImportEvidence,
+  planStorySourceTasks,
+  runPendingStoryEmbeddings,
+  seedStorySourceTasks,
+  sourceLibraryRef,
+} from '@/lib/storySourceProgress';
+import { useSettingsStore, withEmbeddingDefaults } from '@/stores/settingsStore';
 
 interface ImportTextDialogProps {
+  isOpen: boolean;
   onClose: () => void;
-  onImportComplete: (stageResults: string[]) => void;
+  onImportComplete: (
+    stageResults: string[],
+    psycheTimeline?: PsycheTimelineProjectState | null,
+    storySource?: StorySourceLibraryRef | null,
+  ) => void;
 }
 
 // 讨论模式的提示词（完整版）
@@ -322,8 +380,29 @@ interface Message {
   content: string;
 }
 
+interface PreparedSource {
+  fingerprint: string;
+  originalText: string;
+  isLongText: boolean;
+  chunks: SourceChunk[];
+  evidence: ChunkEvidence[];
+  discussionContext: string;
+}
+
+interface AnalysisProgress {
+  label: string;
+  current: number;
+  total: number;
+}
+
+function readableImportError(error: unknown, fallback: string): string {
+  return error instanceof Error && error.message.trim() ? error.message : fallback;
+}
+
 // 剧情线模式 - 第一阶段：剧情讨论提示词（只讨论剧情，不涉及分发）
 const STORYLINE_DISCUSSION_PROMPT = `你是一个专业的角色设定分析师和创作顾问。用户导入了一段小说文本，希望**从头开始体验这个故事**。
+
+${EVIDENCE_FIDELITY_RULES}
 
 ⚠️ **这是第一阶段：剧情讨论**
 - 只讨论剧情走向、角色选择、需要修正的内容
@@ -352,17 +431,30 @@ const STORYLINE_DISCUSSION_PROMPT = `你是一个专业的角色设定分析师�
 2. [事件2简述] → 可能的触发条件
 ...
 
+🧭 **建议进入点**（必须基于原作证据给出 2-3 个）：
+- **早期进入**：[场景和时间]；角色已知：[简述]；角色未知：[简述]
+- **中期进入**：[场景和时间]；角色已知：[简述]；角色未知：[简述]
+- **后期进入**：[场景和时间]；角色已知：[简述]；角色未知：[简述]
+
+进入点必须说明角色当时的知识边界和关系状态。用户可以只选择“早期/中期/后期”或其中一个场景，不要求用户记住具体章节事实。
+
 ⚠️ **发现的问题**（如果有）：
 - [逻辑问题、设定矛盾、人设崩塌等]
 - [需要用户确认是否修正]
 
 **提问部分**（2-3个关键问题）：
 - "你想让 AI 扮演哪个角色？你扮演哪个？"
-- "故事的起点应该设在哪里？（小说开头/某个特定场景）"
+- "你更想从早期、中期还是后期加入？也可以直接选择上面的一个建议进入点。"
 - "哪些剧情线索你希望保留？哪些可以自由发展？"
 - "角色的初始关系是什么样的？"
 - "⭐ **关系态度问题**：小说中角色对用户的态度有变化吗？（如从冷漠→好感→喜欢）你希望保留这个渐变过程，还是可以自由发展？"
 - "原文有什么问题需要修正吗？（逻辑、人设、剧情等）"
+
+⚠️ **用户责任边界**：
+- 只向用户询问扮演角色、进入时期、剧透偏好、剧情可改变程度等主观选择。
+- 不得要求用户判断原作客观事实、事件先后或角色在某章知道什么；这些必须由证据索引和后续审计完成。
+- 不得把“角色已死/已活”“某人是否有罪”等与原文冲突的路线当作普通选项。只有用户明确要求平行世界或改写原作时，才把它记录为主动改编。
+- 用户只说“调查中段”“关系刚开始合作”等模糊描述时，应自动匹配最接近的证据节点，并列出已知/未知边界供其选择。
 
 ### 后续对话
 
@@ -438,6 +530,8 @@ const STORYLINE_DISCUSSION_PROMPT = `你是一个专业的角色设定分析师�
 // 剧情线模式 - 第二阶段：分发预览提示词
 const DISTRIBUTE_PREVIEW_PROMPT = `你是一个角色卡分发专家。用户已经完成了剧情讨论，现在需要你**预览**角色卡的分发内容。
 
+${EVIDENCE_FIDELITY_RULES}
+
 ⚠️ **这是第二阶段：分发预览与讨论**
 - 第一阶段已经确定了剧情走向、修正方案
 - 现在要把这些整合到角色卡的各个阶段
@@ -476,21 +570,27 @@ const DISTRIBUTE_PREVIEW_PROMPT = `你是一个角色卡分发专家。用户已
 - **初始动机**：[故事开始时的目标/渴望]
 （如有修正）⚠️ 已应用修正：[具体修正内容]
 
-**【阶段3：物理描写】预览**
+**【阶段3：关系网络】预览**
+- **[关系角色] → [目标角色]**：[当前态度、利益、依赖或冲突]
+- **[目标角色] → [关系角色]**：[当前态度、信任边界]
+- **隐瞒与未知**：[双方尚不知道或故意隐瞒的事项]
+- **当前时点**：[该关系状态对应的故事节点]
+
+**【阶段4：物理描写】预览**
 - **体格**：[身高、体型等]
 - **毛发/皮肤**：[颜色、质地]
 - **面部特征**：[眼睛、表情等]
 - **兽人特征**（如适用）：[耳朵、尾巴等]
 - **穿着风格**：[日常服装]
 
-**【阶段4：互动设计】预览**
+**【阶段6：互动设计】预览**
 - **对话风格**：[说话方式、语气]
 - **语言习惯**：[口头禅、用词特点]
 - **情绪表达**：[不同情绪时的表现]
 - **初始态度**：[故事开始时对其他角色的态度]
 - **首条消息构思**：[简述故事起点场景]
 
-**【阶段5：世界整合】预览**
+**【阶段7：世界整合】预览**
 - **世界设定**：[世界类型、特殊规则]
 - **起始场景**：[故事开始的地点和环境]
 - **种族设定**（如适用）：[特殊生理特征]
@@ -517,6 +617,8 @@ const DISTRIBUTE_PREVIEW_PROMPT = `你是一个角色卡分发专家。用户已
 
 // 剧情线模式的最终分发提示词
 const STORYLINE_FINALIZE_PROMPT = `用户已确认，请根据之前的讨论，输出完整的结构化分析。
+
+${EVIDENCE_FIDELITY_RULES}
 
 ⚠️ **剧情线模式 - 特殊处理原则**：
 
@@ -615,7 +717,14 @@ const STORYLINE_FINALIZE_PROMPT = `用户已确认，请根据之前的讨论，
 4. 用户确认的修改已整合
 5. ⭐ 态度变化轨迹已记录（如用户有要求）`;
 
-export default function ImportTextDialog({ onClose, onImportComplete }: ImportTextDialogProps) {
+// 保留旧版整段提示词，便于读取旧流程记录；新导入流程不再直接执行这些超长单次任务。
+export const LEGACY_TEXT_IMPORT_PROMPTS = Object.freeze({
+  quickAnalysis: QUICK_ANALYSIS_PROMPT,
+  finalize: FINALIZE_PROMPT,
+  storylineFinalize: STORYLINE_FINALIZE_PROMPT,
+});
+
+export default function ImportTextDialog({ isOpen, onClose, onImportComplete }: ImportTextDialogProps) {
   // 基础状态
   const [text, setText] = useState('');
   const [mode, setMode] = useState<ImportMode>('select');
@@ -628,12 +737,24 @@ export default function ImportTextDialog({ onClose, onImportComplete }: ImportTe
   const [messages, setMessages] = useState<Message[]>([]);
   const [userInput, setUserInput] = useState('');
   const [originalText, setOriginalText] = useState(''); // 保存原始文本
-  const [plotMode, setPlotMode] = useState<PlotMode>('normal'); // 剧情线模式
   const [aiSummary, setAiSummary] = useState(''); // AI 初步分析结果（用于模式选择阶段显示）
   const [storylineConclusion, setStorylineConclusion] = useState(''); // 剧情线结论（第一阶段讨论结果）
-  const [storylineMessages, setStorylineMessages] = useState<Message[]>([]); // 剧情讨论的消息历史
+  const [preparedSource, setPreparedSource] = useState<PreparedSource | null>(null);
+  const [sourcePreparationMode, setSourcePreparationMode] = useState<SourcePreparationMode>('balanced');
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress>({
+    label: '',
+    current: 0,
+    total: 0,
+  });
 
-  const { generateResponse, loading } = useAIService();
+  const {
+    generateResponse,
+    generateReviewResponse,
+    generateAuditResponse,
+    loading,
+    retryNotice,
+  } = useAIService();
+  const aiSettings = useSettingsStore(state => state.settings);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -649,6 +770,526 @@ export default function ImportTextDialog({ onClose, onImportComplete }: ImportTe
       inputRef.current?.focus();
     }
   }, [mode, discussionPhase]);
+
+  const updateCheckpoint = (
+    fingerprint: string,
+    chunks: SourceChunk[],
+    patch: Partial<LongTextImportCheckpoint>,
+  ) => {
+    const existing = loadLongTextCheckpoint(fingerprint);
+    saveLongTextCheckpoint({
+      ...existing,
+      version: 1,
+      fingerprint,
+      chunkIds: chunks.map(chunk => chunk.id),
+      evidence: existing?.evidence || [],
+      ...patch,
+      updatedAt: Date.now(),
+    });
+  };
+
+  const analyzeSourceChunk = async (chunk: SourceChunk): Promise<ChunkEvidence> => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await generateResponse(
+          [{ role: 'user', content: buildChunkEvidencePrompt(chunk, attempt > 0) }],
+          '你是长篇小说摄入工程中的证据提取器。严格遵守输出标记，区分原文事实、推断和未知信息。',
+        );
+        const parsed = parseChunkEvidence(response, chunk);
+        if (parsed) return parsed;
+        lastError = new Error(`来源 ${chunk.id} 的证据标记不完整`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(`来源 ${chunk.id} 分析失败`);
+  };
+
+  const reviewSourceChunk = async (
+    chunk: SourceChunk,
+    draft: ChunkEvidence,
+  ): Promise<ChunkEvidence> => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await generateReviewResponse(
+          [{ role: 'user', content: buildChunkEvidenceReviewPrompt(chunk, draft, attempt > 0) }],
+          '你是第二位、独立工作的原作证据复核员。重新核对原文，修复第一位 AI 的遗漏、臆测、事实强化和时间线错误。',
+        );
+        const parsed = parseChunkEvidence(response, chunk);
+        if (parsed) return parsed;
+        lastError = new Error(`来源 ${chunk.id} 的复核结果标记不完整`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(`来源 ${chunk.id} 复核失败`);
+  };
+
+  const auditNarrativeCandidate = async (
+    label: string,
+    evidenceContext: string,
+    userDecisions: string,
+    candidate: string,
+    requirements: string,
+  ): Promise<string> => {
+    let lastError: unknown;
+    let currentCandidate = candidate;
+    let deterministicFeedback = '';
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await generateAuditResponse(
+          [{
+            role: 'user',
+            content: buildNarrativeAuditPrompt(
+              label,
+              evidenceContext,
+              userDecisions,
+              currentCandidate,
+              [requirements, deterministicFeedback].filter(Boolean).join('\n'),
+              attempt > 0,
+            ),
+          }],
+          '你是独立审计 AI，不参与前面的创作。只根据证据、时间边界和用户选择修订候选结果，禁止凭常识补全。',
+        );
+        const audited = parseAuditedResult(response);
+        if (audited && audited.length >= 40) {
+          const violations = findEvidenceFidelityViolations(evidenceContext, audited);
+          if (violations.length === 0) return audited;
+          currentCandidate = audited;
+          deterministicFeedback = `- 确定性门禁发现以下违规，必须逐项修复：\n${violations
+            .map(violation => `  - [${violation.type}] ${violation.message}`)
+            .join('\n')}`;
+          lastError = new Error(`${label}仍有 ${violations.length} 项证据一致性违规`);
+          continue;
+        }
+        lastError = new Error(`${label}审计结果不完整`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(`${label}审计失败`);
+  };
+
+  const buildAuditEvidenceContext = (
+    source: PreparedSource | null,
+    curatedContext: string,
+  ): string => {
+    if (!source || source.originalText.length > EVIDENCE_CONTEXT_MAX) return curatedContext;
+    return `${curatedContext}\n\n--- 可直接核对的原文全文 ---\n${source.originalText}`;
+  };
+
+  const mergeEvidence = async (blocks: string[], purpose: string): Promise<string> => {
+    let current = blocks.filter(block => block.trim());
+    if (current.length === 0) return '';
+    if (current.length === 1 && current[0].length <= 30_000) return current[0];
+
+    let pass = 0;
+    while (current.length > 1 || current[0].length > 30_000) {
+      pass += 1;
+      const groups = groupTextBlocks(current);
+      const next: string[] = [];
+      for (let index = 0; index < groups.length; index += 1) {
+        setAnalysisProgress({
+          label: `${purpose}：合并第 ${pass} 轮`,
+          current: index + 1,
+          total: groups.length,
+        });
+        let merged: string | null = null;
+        let lastError: unknown;
+        for (let attempt = 0; attempt < 2 && !merged; attempt += 1) {
+          try {
+            const response = await generateResponse(
+              [{ role: 'user', content: buildEvidenceMergePrompt(groups[index], purpose, attempt > 0) }],
+              '你是长篇资料的分层归并器。保留来源、因果、矛盾和可核对细节，严格使用指定标记。',
+            );
+            merged = parseMarkedEvidence(response);
+            if (!merged) lastError = new Error('证据合并结果缺少完整标记');
+            if (merged) {
+              setAnalysisProgress({
+                label: `${purpose}：独立审计第 ${pass} 轮`,
+                current: index + 1,
+                total: groups.length,
+              });
+              merged = await auditNarrativeCandidate(
+                `${purpose}合并索引`,
+                groups[index].join('\n\n'),
+                '这是证据索引合并，不包含用户创作改写。',
+                merged,
+                '- 保留来源编号、事件先后、事实强度、冲突来源和未知状态。\n- 删除合并过程中新增的因果、动机、关系经历和死亡语义。\n- 后文证据与前文冲突时明确记录修正，不得选择更戏剧化的版本。',
+              );
+            }
+          } catch (error) {
+            lastError = error;
+          }
+        }
+        if (!merged) throw lastError instanceof Error ? lastError : new Error('证据合并失败');
+        next.push(merged);
+      }
+      current = next;
+      if (pass >= 6 && current.length > 1) {
+        throw new Error('原文索引仍然过大，请减少单次导入体量或提高模型上下文上限');
+      }
+    }
+    return current[0];
+  };
+
+  const prepareSourceText = async (sourceText: string): Promise<PreparedSource> => {
+    const fingerprint = fingerprintText(sourceText);
+    const chunks = splitSourceText(sourceText);
+    const isLongText = sourceText.length >= LONG_TEXT_THRESHOLD || chunks.length > 1;
+
+    if (!isLongText) {
+      const prepared = {
+        fingerprint,
+        originalText: sourceText,
+        isLongText: false,
+        chunks,
+        evidence: [],
+        discussionContext: sourceText,
+      };
+      setPreparedSource(prepared);
+      return prepared;
+    }
+
+    const checkpoint = loadLongTextCheckpoint(fingerprint);
+    const analysisChunks = chunks.slice(0, initialEvidenceChunkCount(sourcePreparationMode, chunks.length));
+    const chunkIds = chunks.map(chunk => chunk.id);
+    const checkpointMatches = checkpoint?.chunkIds.length === chunkIds.length
+      && checkpoint.chunkIds.every((id, index) => id === chunkIds[index]);
+    const evidenceById = new Map(
+      (checkpointMatches ? checkpoint?.evidence : [])?.map(item => [item.chunkId, item]) || [],
+    );
+    const reviewedEvidenceIds = new Set(
+      checkpointMatches ? checkpoint?.reviewedEvidenceIds || [] : [],
+    );
+    let evidenceChanged = false;
+
+    for (let index = 0; index < analysisChunks.length; index += 1) {
+      const chunk = analysisChunks[index];
+      if (evidenceById.has(chunk.id)) continue;
+      setAnalysisProgress({
+        label: `建立原作证据索引：${chunk.title}`,
+        current: index + 1,
+        total: analysisChunks.length,
+      });
+      const item = await analyzeSourceChunk(chunk);
+      evidenceById.set(chunk.id, item);
+      reviewedEvidenceIds.delete(chunk.id);
+      evidenceChanged = true;
+      updateCheckpoint(fingerprint, chunks, {
+        evidence: chunks.map(sourceChunk => evidenceById.get(sourceChunk.id)).filter(Boolean) as ChunkEvidence[],
+        reviewedEvidenceIds: [...reviewedEvidenceIds],
+        auditPipelineVersion: AUDIT_PIPELINE_VERSION,
+        discussionContext: undefined,
+        stageEvidence: checkpointMatches ? checkpoint?.stageEvidence : undefined,
+        decisionFingerprint: undefined,
+        stageResults: undefined,
+        psycheTimeline: undefined,
+      });
+    }
+
+    for (let index = 0; index < analysisChunks.length; index += 1) {
+      const chunk = analysisChunks[index];
+      if (reviewedEvidenceIds.has(chunk.id)) continue;
+      const draft = evidenceById.get(chunk.id);
+      if (!draft) throw new Error(`来源 ${chunk.id} 缺少第一遍证据`);
+      setAnalysisProgress({
+        label: `第二 AI 复核证据：${chunk.title}`,
+        current: index + 1,
+        total: analysisChunks.length,
+      });
+      const reviewed = await reviewSourceChunk(chunk, draft);
+      evidenceById.set(chunk.id, reviewed);
+      reviewedEvidenceIds.add(chunk.id);
+      evidenceChanged = true;
+      updateCheckpoint(fingerprint, chunks, {
+        evidence: chunks.map(sourceChunk => evidenceById.get(sourceChunk.id)).filter(Boolean) as ChunkEvidence[],
+        reviewedEvidenceIds: [...reviewedEvidenceIds],
+        auditPipelineVersion: AUDIT_PIPELINE_VERSION,
+        discussionContext: undefined,
+        stageEvidence: undefined,
+        decisionFingerprint: undefined,
+        stageResults: undefined,
+        psycheTimeline: undefined,
+      });
+    }
+
+    const evidence = chunks
+      .map(chunk => evidenceById.get(chunk.id))
+      .filter(Boolean) as ChunkEvidence[];
+    let discussionContext = checkpointMatches
+      && !evidenceChanged
+      && checkpoint?.auditPipelineVersion === AUDIT_PIPELINE_VERSION
+      ? checkpoint.discussionContext || ''
+      : '';
+    if (!discussionContext) {
+      const overviewBlocks = buildEvidenceBlocks(evidence, [
+        'overview',
+        'characters',
+        'events',
+        'relationships',
+        'world',
+        'uncertainties',
+      ]);
+      discussionContext = await mergeEvidence(overviewBlocks, '全书讨论索引');
+      updateCheckpoint(fingerprint, chunks, {
+        evidence,
+        reviewedEvidenceIds: [...reviewedEvidenceIds],
+        auditPipelineVersion: AUDIT_PIPELINE_VERSION,
+        discussionContext,
+      });
+    }
+
+    const prepared = {
+      fingerprint,
+      originalText: sourceText,
+      isLongText: true,
+      chunks,
+      evidence,
+      discussionContext,
+    };
+    setPreparedSource(prepared);
+    return prepared;
+  };
+
+  const generateStageItem = async (
+    spec: ImportStageSpec,
+    source: PreparedSource,
+    discussionRecord: string,
+    storylineMode: boolean,
+    progressCurrent: number,
+    progressTotal: number,
+  ): Promise<string> => {
+    const checkpoint = loadLongTextCheckpoint(source.fingerprint);
+    let evidenceContext = source.isLongText ? checkpoint?.stageEvidence?.[spec.id] || '' : source.originalText;
+    if (source.isLongText && !evidenceContext) {
+      evidenceContext = await mergeEvidence(
+        buildEvidenceBlocks(source.evidence, spec.evidenceKeys),
+        `${spec.title}证据`,
+      );
+      updateCheckpoint(source.fingerprint, source.chunks, {
+        evidence: source.evidence,
+        discussionContext: source.discussionContext,
+        stageEvidence: {
+          ...(checkpoint?.stageEvidence || {}),
+          [spec.id]: evidenceContext,
+        },
+      });
+    }
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await generateResponse(
+          [{
+            role: 'user',
+            content: buildStageGenerationPrompt(
+              spec,
+              evidenceContext,
+              discussionRecord,
+              storylineMode,
+              attempt > 0,
+            ),
+          }],
+          '你是角色卡编译流水线中的单项写入器。一次只完成一个字段块，严格遵守边界标记，不输出其他阶段。',
+        );
+        const result = parseStageResult(response);
+        if (result && result.length >= 40) {
+          setAnalysisProgress({
+            label: `独立审计 ${spec.title}`,
+            current: progressCurrent,
+            total: progressTotal,
+          });
+          const auditResponse = await generateAuditResponse(
+            [{
+              role: 'user',
+              content: buildStageAuditPrompt(
+                spec,
+                buildAuditEvidenceContext(source, evidenceContext),
+                discussionRecord,
+                result,
+                storylineMode,
+                attempt > 0,
+              ),
+            }],
+            '你是角色卡字段的独立审计 AI。逐项核对来源、知识边界和用户选择，直接返回修订后的字段，不参与创作讨论。',
+          );
+          const audited = parseAuditedResult(auditResponse);
+          if (audited && audited.length >= 40) return audited;
+          lastError = new Error(`${spec.title}审计输出不完整`);
+          continue;
+        }
+        lastError = new Error(`${spec.title}输出不完整`);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(`${spec.title}生成失败`);
+  };
+
+  const compilePsycheTimeline = async (
+    source: PreparedSource,
+    discussionRecord: string,
+    results: string[],
+    evidenceContext: string,
+  ): Promise<PsycheTimelineProjectState> => {
+    const input: PsycheTimelineCompilationInput = {
+      identity: results[0] || '无',
+      background: results[1] || '无',
+      relationships: results[2] || '无',
+      world: results[6] || '无',
+      trajectory: results[9] || '无',
+      discussion: discussionRecord || '无额外讨论',
+      evidence: buildAuditEvidenceContext(source, evidenceContext),
+    };
+    let validationFeedback = '';
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        setAnalysisProgress({ label: '编译 PTE 结构化时间线', current: 1, total: 2 });
+        const response = await generateResponse(
+          [{ role: 'user', content: buildPsycheTimelineCompilationPrompt(
+            input,
+            validationFeedback,
+            attempt > 0,
+          ) }],
+          '你是 PTE 1.0 结构化编译器。只输出符合协议的完整 JSON；不得把故事起点之后的事实写入初始状态。',
+        );
+        const candidate = parsePsycheTimelineResponse(
+          response,
+          results[9] || '',
+          source.fingerprint,
+        );
+
+        setAnalysisProgress({ label: '独立审计 PTE 时间线', current: 2, total: 2 });
+        const auditResponse = await generateAuditResponse(
+          [{ role: 'user', content: buildPsycheTimelineAuditPrompt(input, candidate) }],
+          '你是独立的 PTE 时间线审计 AI。核对原作证据、知识边界、事件顺序和 PTE 1.0 数据契约，只输出修订后的完整 JSON。',
+        );
+        return parsePsycheTimelineResponse(
+          auditResponse,
+          results[9] || '',
+          source.fingerprint,
+          candidate.createdAt,
+        );
+      } catch (error) {
+        lastError = error;
+        validationFeedback = error instanceof Error ? error.message : String(error);
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('PTE 结构化时间线编译失败');
+  };
+
+  const generateDistributedStages = async (
+    source: PreparedSource,
+    discussionRecord: string,
+    selectedPlotMode: PlotMode,
+  ): Promise<{ stageResults: string[]; psycheTimeline: PsycheTimelineProjectState | null }> => {
+    const storylineMode = selectedPlotMode === 'storyline';
+    const decisionFingerprint = fingerprintText(`${selectedPlotMode}\n${discussionRecord}`);
+    const checkpoint = loadLongTextCheckpoint(source.fingerprint);
+    const canResume = checkpoint?.auditPipelineVersion === AUDIT_PIPELINE_VERSION
+      && checkpoint.decisionFingerprint === decisionFingerprint;
+    const results = canResume && checkpoint?.stageResults
+      ? [...checkpoint.stageResults]
+      : Array<string>(10).fill('');
+    const specs = storylineMode
+      ? [...IMPORT_STAGE_SPECS, PLOT_TRAJECTORY_SPEC]
+      : IMPORT_STAGE_SPECS;
+
+    for (let index = 0; index < specs.length; index += 1) {
+      const spec = specs[index];
+      if (results[spec.stageIndex]?.trim()) continue;
+      setAnalysisProgress({
+        label: `生成 ${spec.title}`,
+        current: index + 1,
+        total: specs.length + (storylineMode ? 1 : 0),
+      });
+      results[spec.stageIndex] = await generateStageItem(
+        spec,
+        source,
+        discussionRecord,
+        storylineMode,
+        index + 1,
+        specs.length + (storylineMode ? 1 : 0),
+      );
+      updateCheckpoint(source.fingerprint, source.chunks, {
+        evidence: source.evidence,
+        discussionContext: source.discussionContext,
+        decisionFingerprint,
+        stageResults: results,
+      });
+    }
+
+    results[4] ||= '';
+    results[7] ||= '';
+    results[8] ||= '';
+    let psycheTimeline: PsycheTimelineProjectState | null = storylineMode && canResume
+      ? checkpoint?.psycheTimeline || null
+      : null;
+    if (storylineMode && results[9] && !psycheTimeline) {
+      const latestCheckpoint = loadLongTextCheckpoint(source.fingerprint);
+      const timelineEvidence = source.isLongText
+        ? latestCheckpoint?.stageEvidence?.[PLOT_TRAJECTORY_SPEC.id] || source.discussionContext
+        : source.originalText;
+      psycheTimeline = await compilePsycheTimeline(source, discussionRecord, results, timelineEvidence);
+      updateCheckpoint(source.fingerprint, source.chunks, {
+        evidence: source.evidence,
+        discussionContext: source.discussionContext,
+        decisionFingerprint,
+        stageResults: results,
+        psycheTimeline,
+      });
+    }
+    if (results[9]) {
+      results[9] = `📖 **剧情轨迹指南**（保存在项目时间线，不注入 creator_notes）\n\n` +
+        `⚠️ 以下内容是潜在发展方向，不是角色已经经历的历史。\n\n${results[9]}`;
+    }
+    return { stageResults: results, psycheTimeline };
+  };
+
+  const finishImport = async (
+    stageResults: string[],
+    psycheTimeline?: PsycheTimelineProjectState | null,
+    source?: PreparedSource,
+  ) => {
+    let storySource: StorySourceLibraryRef | null = null;
+    let completedTimeline = psycheTimeline;
+    if (source) {
+      const storyId = psycheTimeline?.plan?.storyId || `source-${source.fingerprint}`;
+      setAnalysisProgress({ label: '保存渐进式原文库', current: 1, total: 1 });
+      const corpus = buildStorySourceCorpus(
+        source.originalText,
+        storyId,
+        source.fingerprint,
+        sourcePreparationMode,
+      );
+      const progressiveCorpus = mergeReviewedImportEvidence(corpus, source.evidence);
+      await putStorySourceCorpus(progressiveCorpus);
+      const embedding = withEmbeddingDefaults(aiSettings).embedding;
+      await seedStorySourceTasks(planStorySourceTasks(progressiveCorpus, embedding.enabled));
+      storySource = sourceLibraryRef(progressiveCorpus);
+      if (embedding.enabled) {
+        const run = runPendingStoryEmbeddings(
+          progressiveCorpus.index.corpusId,
+          embedding,
+          sourcePreparationMode === 'complete'
+            ? progress => setAnalysisProgress({ label: '建立原文向量索引', current: progress.completed, total: progress.total })
+            : undefined,
+        );
+        if (sourcePreparationMode === 'complete') await run;
+        else void run.catch(error => console.warn('原文向量后台任务失败，已保留失败任务供重试。', error));
+      }
+      if (completedTimeline) completedTimeline = { ...completedTimeline, sourceLibrary: storySource };
+    }
+    setSuccess(true);
+    setTimeout(() => {
+      onImportComplete(stageResults, completedTimeline, storySource);
+      onClose();
+    }, 800);
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -675,35 +1316,49 @@ export default function ImportTextDialog({ onClose, onImportComplete }: ImportTe
     setError('');
 
     try {
-      // AI 先快速阅读文本，给出简要总结（用于模式选择界面）
+      const source = await prepareSourceText(text);
+      const sourceLabel = source.isLongText
+        ? `以下内容是由 ${source.chunks.length} 个原文章节/片段建立的证据索引，不是原文全文。`
+        : '以下内容是用户导入的原始文本。';
       const summaryPrompt = `请快速阅读以下文本，给出一个简短的总结（3-5句话），包括：
 1. 这是什么类型的内容（小说/设定/角色介绍等）
 2. 主要角色有哪些
 3. 如果是小说，有哪些主要剧情事件
 
+${sourceLabel}
+
 ---
-${text}
+${source.discussionContext}
 ---
 
 请用简洁的方式总结，不需要提问。`;
 
-      const summary = await generateResponse(
+      let summary = await generateResponse(
         [{ role: 'user', content: summaryPrompt }],
         '你是一个文本分析助手，请简洁地总结文本内容。'
       );
+
+      setAnalysisProgress({ label: '独立审计模式摘要', current: 1, total: 1 });
+      summary = await auditNarrativeCandidate(
+        '模式选择摘要',
+        buildAuditEvidenceContext(source, source.discussionContext),
+        '用户尚未选择处理模式。',
+        summary,
+        '- 保持 3-5 句话，只概括内容类型、主要角色、核心动机和主要事件。\n- 角色动机、责任、生死和事件结果必须与证据强度一致；不得把调查、寻找真相等动机强化为复仇。\n- 标题、人名、地名和数字必须逐字保留。',
+      );
+      setAnalysisProgress({ label: '', current: 0, total: 0 });
 
       setAiSummary(summary);
       setDiscussionPhase('mode-select'); // 进入模式选择阶段
     } catch (error) {
       console.error('AI 分析失败:', error);
-      setError('AI 分析失败，请检查 API 设置或稍后重试');
+      setError(readableImportError(error, 'AI 分析失败，请检查 API 设置或稍后重试'));
       setMode('select');
     }
   };
 
   // 确认模式选择，开始正式讨论
   const confirmModeAndStartDiscussion = async (selectedMode: PlotMode) => {
-    setPlotMode(selectedMode);
     setDiscussionPhase('reading'); // 显示加载状态
 
     try {
@@ -719,16 +1374,32 @@ ${text}
       const initialPrompt = `我刚刚导入了以下文本，请帮我分析：
 
 ---
-${originalText}
+${preparedSource?.discussionContext || originalText}
 ---
 ${modeHint}
 
 请先简要总结你读到的内容，然后提出 2-3 个问题帮助我明确创作方向。`;
 
-      const response = await generateResponse(
+      let response = await generateResponse(
         [{ role: 'user', content: initialPrompt }],
         systemPrompt
       );
+
+      if (selectedMode === 'storyline') {
+        setAnalysisProgress({ label: '独立审计建议进入点', current: 1, total: 1 });
+        response = await auditNarrativeCandidate(
+          '剧情讨论开场',
+          buildAuditEvidenceContext(
+            preparedSource,
+            preparedSource?.discussionContext || originalText,
+          ),
+          '用户尚未选择角色和进入点。',
+          response,
+          '- 给出 2-3 个基于证据的早期、中期或后期进入点，并分别概括角色已知、未知和关系状态。\n- 只询问扮演角色、进入时期、剧透偏好和剧情可改变程度。\n- 不得要求用户裁决原作事实，也不得把与原文冲突的生死、有罪无罪等路线当作普通选项。',
+        );
+        setAnalysisProgress({ label: '', current: 0, total: 0 });
+        response = `✓ 已通过独立剧情审计\n\n${response}`;
+      }
 
       const initialMessages: Message[] = [
         { role: 'user', content: selectedMode === 'storyline'
@@ -755,10 +1426,11 @@ ${modeHint}
 
 
   // 发送讨论消息
-  const sendMessage = async () => {
-    if (!userInput.trim() || loading) return;
+  const sendMessage = async (presetContent?: string) => {
+    const content = presetContent ?? userInput;
+    if (!content.trim() || loading) return;
 
-    const newUserMessage: Message = { role: 'user', content: userInput };
+    const newUserMessage: Message = { role: 'user', content };
     const updatedMessages = [...messages, newUserMessage];
     setMessages(updatedMessages);
     setUserInput('');
@@ -768,26 +1440,28 @@ ${modeHint}
       // 根据当前阶段处理不同的逻辑
       if (discussionPhase === 'storyline-discuss') {
         // 剧情线模式 - 第一阶段：剧情讨论
-        await handleStorylineDiscuss(updatedMessages);
+        await handleStorylineDiscuss(updatedMessages, content);
       } else if (discussionPhase === 'distribute-discuss') {
         // 剧情线模式 - 第二阶段：分发讨论
-        await handleDistributeDiscuss(updatedMessages);
+        await handleDistributeDiscuss(updatedMessages, content);
       } else {
         // 普通模式讨论
-        await handleNormalDiscuss(updatedMessages);
+        await handleNormalDiscuss(updatedMessages, content);
       }
     } catch (error) {
       console.error('AI 响应失败:', error);
-      setError('AI 响应失败，请重试');
+      setError(readableImportError(error, 'AI 响应失败，请重试'));
       setMessages(updatedMessages);
+      setDiscussionPhase(discussionPhase);
+      setAnalysisProgress({ label: '', current: 0, total: 0 });
     }
   };
 
   // 剧情线模式 - 第一阶段：剧情讨论
-  const handleStorylineDiscuss = async (updatedMessages: Message[]) => {
-    const confirmKeywords = ['确认剧情', '剧情确认', '确认', '可以了', '没问题'];
-    const isConfirmingStoryline = confirmKeywords.some(keyword =>
-      userInput.toLowerCase().includes(keyword.toLowerCase())
+  const handleStorylineDiscuss = async (updatedMessages: Message[], latestInput: string) => {
+    const isConfirmingStoryline = matchesExactWorkflowCommand(
+      latestInput,
+      ['确认剧情', '剧情确认'],
     );
 
     const contextMessages = updatedMessages.map(m => ({
@@ -795,8 +1469,8 @@ ${modeHint}
       content: m.content
     }));
 
-    const systemContext = `原始导入文本：
-${originalText}
+    const systemContext = `原作证据索引：
+${preparedSource?.discussionContext || originalText}
 
 ⚠️ 当前是【剧情线模式 - 第一阶段：剧情讨论】
 只讨论剧情走向、角色选择、需要修正的内容。
@@ -810,18 +1484,53 @@ ${isConfirmingStoryline ? '用户已确认，请输出【剧情结论】格式�
       STORYLINE_DISCUSSION_PROMPT
     );
 
-    // 检查是否输出了剧情结论（增加空格容错）
-    const hasStorylineConclusion = /【\s*剧情结论\s*】/.test(response);
-    if (hasStorylineConclusion) {
-      // 保存剧情结论和剧情讨论历史
-      setStorylineConclusion(response);
-      setStorylineMessages([...updatedMessages, { role: 'assistant', content: response }]);
-      setMessages([...updatedMessages, { role: 'assistant', content: response }]);
+    if (isFormalStorylineConclusion(response)) {
+      setAnalysisProgress({ label: '独立审计剧情结论', current: 1, total: 1 });
+      const discussionRecord = updatedMessages
+        .map(message => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`)
+        .join('\n\n');
+      const auditedConclusion = await auditNarrativeCandidate(
+        '剧情结论',
+        buildAuditEvidenceContext(
+          preparedSource,
+          preparedSource?.discussionContext || originalText,
+        ),
+        discussionRecord,
+        response,
+        '- 必须保留正式的【剧情结论】标题、扮演设定和故事起点。\n- 自动编译选定起点时角色已经知道、尚不知道的事实，以及当时的关系边界。\n- 用户没有提供的章节事实由证据决定，不得反问用户校对原文。\n- 时间边界之后的信息只能作为潜在剧情线。',
+      );
+      if (!isFormalStorylineConclusion(auditedConclusion)) {
+        throw new Error('独立审计未返回完整的剧情结论结构');
+      }
+      setStorylineConclusion(auditedConclusion);
+      setMessages([
+        ...updatedMessages,
+        { role: 'assistant', content: `✓ 已通过独立剧情审计\n\n${auditedConclusion}` },
+      ]);
+      setAnalysisProgress({ label: '', current: 0, total: 0 });
 
       // 显示确认按钮，等待用户确认进入下一阶段
       setDiscussionPhase('storyline-confirm');
     } else {
-      setMessages([...updatedMessages, { role: 'assistant', content: response }]);
+      setAnalysisProgress({ label: '独立审计剧情讨论回复', current: 1, total: 1 });
+      const discussionRecord = updatedMessages
+        .map(message => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`)
+        .join('\n\n');
+      const auditedReply = await auditNarrativeCandidate(
+        '剧情讨论回复',
+        buildAuditEvidenceContext(
+          preparedSource,
+          preparedSource?.discussionContext || originalText,
+        ),
+        discussionRecord,
+        response,
+        '- 只向用户询问主观创作选择，不要求用户回忆或校对客观章节事实。\n- 如果需要选择进入点，应自动提供证据支持的已知、未知和关系状态。\n- 不得把与原作冲突的事实路线作为普通建议；主动改写必须由用户明确提出。',
+      );
+      setAnalysisProgress({ label: '', current: 0, total: 0 });
+      setMessages([
+        ...updatedMessages,
+        { role: 'assistant', content: `✓ 已通过独立剧情审计\n\n${auditedReply}` },
+      ]);
     }
   };
 
@@ -832,8 +1541,8 @@ ${isConfirmingStoryline ? '用户已确认，请输出【剧情结论】格式�
     try {
       const previewPrompt = `${DISTRIBUTE_PREVIEW_PROMPT}
 
-原始文本：
-${originalText}
+原作证据索引：
+${preparedSource?.discussionContext || originalText}
 
 剧情讨论结论：
 ${storylineConclusion}
@@ -845,59 +1554,49 @@ ${storylineConclusion}
         DISTRIBUTE_PREVIEW_PROMPT
       );
 
+      setAnalysisProgress({ label: '独立审计分发预览', current: 1, total: 1 });
+      const auditedPreview = await auditNarrativeCandidate(
+        '分发预览',
+        buildAuditEvidenceContext(
+          preparedSource,
+          preparedSource?.discussionContext || originalText,
+        ),
+        storylineConclusion,
+        response,
+        '- 预览必须与真实导入阶段一致：基础身份、深度背景、关系网络、物理描写、互动设计、世界整合和剧情轨迹。\n- 关系网络单独列出双向态度、信任边界、隐瞒事项和当前时点。\n- 起始场景不得增加原文和用户选择中没有的物件、动作或环境。\n- 未来事实不得写入角色当前记忆、背景或首条消息。',
+      );
+      setAnalysisProgress({ label: '', current: 0, total: 0 });
+
       setMessages([
         { role: 'user', content: '（进入第二阶段：分发预览）' },
-        { role: 'assistant', content: response }
+        { role: 'assistant', content: `✓ 已通过独立分发审计\n\n${auditedPreview}` }
       ]);
       setDiscussionPhase('distribute-discuss');
     } catch (error) {
       console.error('分发预览失败:', error);
       setError('分发预览失败，请重试');
+      setAnalysisProgress({ label: '', current: 0, total: 0 });
     }
   };
 
   // 剧情线模式 - 第二阶段：分发讨论
-  const handleDistributeDiscuss = async (updatedMessages: Message[]) => {
-    const confirmKeywords = ['确认分发', '分发确认', '确认', '可以了', '没问题', '开始分发'];
-    const isConfirmingDistribute = confirmKeywords.some(keyword =>
-      userInput.toLowerCase().includes(keyword.toLowerCase())
+  const handleDistributeDiscuss = async (updatedMessages: Message[], latestInput: string) => {
+    const isConfirmingDistribute = matchesExactWorkflowCommand(
+      latestInput,
+      ['确认分发', '分发确认', '开始分发'],
     );
 
     if (isConfirmingDistribute) {
       // 最终分发
       setDiscussionPhase('finalizing');
 
-      const finalizePrompt = `${STORYLINE_FINALIZE_PROMPT}
-
-原始文本：
-${originalText}
-
-剧情讨论结论：
-${storylineConclusion}
-
-分发讨论记录：
-${updatedMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}：${m.content}`).join('\n\n')}
-
-⚠️ 请输出完整的结构化分析（【阶段1：xxx】格式）`;
-
-      const response = await generateResponse(
-        [{ role: 'user', content: finalizePrompt }],
-        STORYLINE_FINALIZE_PROMPT
-      );
-
-      // 检测是否包含阶段1（增加容错：空格、中英文冒号、汉字数字）
-      const hasStage1 = /【\s*阶段\s*[1一]\s*[：:]/.test(response);
-      if (hasStage1) {
-        const stageResults = parseAnalysisResult(response);
-        setSuccess(true);
-        setTimeout(() => {
-          onImportComplete(stageResults);
-          onClose();
-        }, 1500);
-      } else {
-        setMessages([...updatedMessages, { role: 'assistant', content: response }]);
-        setDiscussionPhase('distribute-discuss');
-      }
+      const source = preparedSource || await prepareSourceText(originalText);
+      const discussionRecord = [
+        `剧情讨论结论：\n${storylineConclusion}`,
+        `分发讨论记录：\n${updatedMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}：${m.content}`).join('\n\n')}`,
+      ].join('\n\n');
+      const result = await generateDistributedStages(source, discussionRecord, 'storyline');
+      await finishImport(result.stageResults, result.psycheTimeline, source);
     } else {
       // 继续分发讨论
       const contextMessages = updatedMessages.map(m => ({
@@ -905,8 +1604,8 @@ ${updatedMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}：${m.content
         content: m.content
       }));
 
-      const systemContext = `原始导入文本：
-${originalText}
+      const systemContext = `原作证据索引：
+${preparedSource?.discussionContext || originalText}
 
 剧情讨论结论：
 ${storylineConclusion}
@@ -920,55 +1619,52 @@ ${storylineConclusion}
         ],
         DISTRIBUTE_PREVIEW_PROMPT
       );
-
-      setMessages([...updatedMessages, { role: 'assistant', content: response }]);
+      setAnalysisProgress({ label: '独立复核修改后的分发预览', current: 1, total: 1 });
+      const auditedPreview = await auditNarrativeCandidate(
+        '分发预览',
+        buildAuditEvidenceContext(
+          preparedSource,
+          preparedSource?.discussionContext || originalText,
+        ),
+        [
+          storylineConclusion,
+          ...updatedMessages.map(message => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`),
+        ].join('\n\n'),
+        response,
+        '- 应用用户的创作偏好，但所有客观事实仍由证据决定。\n- 保持故事起点的知识边界，不把未来事件倒灌进当前状态。\n- 关系网络必须单列双向态度、信任边界和隐瞒事项。',
+      );
+      setAnalysisProgress({ label: '', current: 0, total: 0 });
+      setMessages([
+        ...updatedMessages,
+        { role: 'assistant', content: `✓ 已通过独立分发审计\n\n${auditedPreview}` },
+      ]);
     }
   };
 
   // 普通模式讨论
-  const handleNormalDiscuss = async (updatedMessages: Message[]) => {
-    const confirmKeywords = ['确认', '可以了', '开始分发', '没问题', '就这样', '确定'];
-    const isConfirming = confirmKeywords.some(keyword =>
-      userInput.toLowerCase().includes(keyword.toLowerCase())
+  const handleNormalDiscuss = async (updatedMessages: Message[], latestInput: string) => {
+    const isConfirming = matchesExactWorkflowCommand(
+      latestInput,
+      ['确认', '确认并分发', '开始分发', '就这样', '确定'],
     );
 
     if (isConfirming) {
       setDiscussionPhase('finalizing');
 
-      const finalizePrompt = `${FINALIZE_PROMPT}
-
-原始文本：
-${originalText}
-
-之前的讨论记录：
-${updatedMessages.map(m => `${m.role === 'user' ? '用户' : 'AI'}：${m.content}`).join('\n\n')}`;
-
-      const response = await generateResponse(
-        [{ role: 'user', content: finalizePrompt }],
-        DISCUSSION_SYSTEM_PROMPT
-      );
-
-      // 检测是否包含阶段1（增加容错）
-      const hasStage1 = /【\s*阶段\s*[1一]\s*[：:]/.test(response);
-      if (hasStage1) {
-        const stageResults = parseAnalysisResult(response);
-        setSuccess(true);
-        setTimeout(() => {
-          onImportComplete(stageResults);
-          onClose();
-        }, 1500);
-      } else {
-        setMessages([...updatedMessages, { role: 'assistant', content: response }]);
-        setDiscussionPhase('chatting');
-      }
+      const source = preparedSource || await prepareSourceText(originalText);
+      const discussionRecord = updatedMessages
+        .map(m => `${m.role === 'user' ? '用户' : 'AI'}：${m.content}`)
+        .join('\n\n');
+      const result = await generateDistributedStages(source, discussionRecord, 'normal');
+      await finishImport(result.stageResults, result.psycheTimeline, source);
     } else {
       const contextMessages = updatedMessages.map(m => ({
         role: m.role as 'user' | 'assistant',
         content: m.content
       }));
 
-      const systemContext = `原始导入文本：
-${originalText}`;
+      const systemContext = `原作证据索引：
+${preparedSource?.discussionContext || originalText}`;
 
       const response = await generateResponse(
         [
@@ -994,20 +1690,16 @@ ${originalText}`;
     setError('');
 
     try {
-      const response = await generateResponse(
-        [{ role: 'user', content: `${QUICK_ANALYSIS_PROMPT}\n\n文本内容：\n${text}` }],
-        '你是一个全方位的创作内容分析专家。深入分析文本，提取所有创作维度的完整信息。'
+      const source = await prepareSourceText(text);
+      const result = await generateDistributedStages(
+        source,
+        '用户选择快速分析，没有额外修正。请根据原作证据识别最适合制作为角色卡的核心角色；如存在多个同等重要角色，在基础身份中明确列出并标注扮演归属待确认。',
+        'normal',
       );
-
-      const stageResults = parseAnalysisResult(response);
-      setSuccess(true);
-      setTimeout(() => {
-        onImportComplete(stageResults);
-        onClose();
-      }, 1500);
+      await finishImport(result.stageResults, result.psycheTimeline, source);
     } catch (error) {
       console.error('分析失败:', error);
-      setError('AI 分析失败，请检查 API 设置或稍后重试');
+      setError(readableImportError(error, 'AI 分析失败，请检查 API 设置或稍后重试'));
       setMode('select');
     } finally {
       setIsAnalyzing(false);
@@ -1015,86 +1707,11 @@ ${originalText}`;
   };
 
 
-  // 解析分析结果
-  const parseAnalysisResult = (analysis: string): string[] => {
-    const results: string[] = [];
-
-    // 正则表达式增加容错：
-    // - \s* 允许空格
-    // - [：:] 兼容中英文冒号
-    // - [1一] 兼容阿拉伯数字和汉字数字
-    // - .*? 允许标题有变体（如"基础身份信息"）
-    const stage1Match = analysis.match(/【\s*阶段\s*[1一]\s*[：:]\s*基础身份.*?】([\s\S]*?)(?=【\s*阶段\s*[2二]|$)/i);
-    const stage2Match = analysis.match(/【\s*阶段\s*[2二]\s*[：:]\s*深度背景.*?】([\s\S]*?)(?=【\s*阶段\s*[3三]|$)/i);
-    const stage3Match = analysis.match(/【\s*阶段\s*[3三]\s*[：:]\s*物理描写.*?】([\s\S]*?)(?=【\s*阶段\s*[4四]|$)/i);
-    const stage4Match = analysis.match(/【\s*阶段\s*[4四]\s*[：:]\s*互动设计.*?】([\s\S]*?)(?=【\s*阶段\s*[5五]|$)/i);
-    const stage5Match = analysis.match(/【\s*阶段\s*[5五]\s*[：:]\s*世界整合.*?】([\s\S]*?)(?=【\s*剧情轨迹\s*】|$)/i);
-
-    // 剧情线模式：提取【剧情轨迹】部分（也增加空格容错）
-    const plotTrajectoryMatch = analysis.match(/【\s*剧情轨迹\s*】([\s\S]*?)$/);
-
-    // 从阶段2中提取人际关系
-    let backgroundInfo = stage2Match ? stage2Match[1].trim() : '未能提取到背景信息';
-    let relationshipInfo = '';
-
-    if (backgroundInfo.includes('人际关系')) {
-      const parts = backgroundInfo.split(/人际关系[:：]/);
-      if (parts.length > 1) {
-        backgroundInfo = parts[0].trim();
-        relationshipInfo = parts[1].trim();
-      }
-    }
-
-    // 映射到 StageFlow 的 9 个阶段
-    results[0] = stage1Match ? stage1Match[1].trim() : '未能提取到基础身份信息';
-    results[1] = backgroundInfo;
-    results[2] = relationshipInfo || '未能提取到关系网络信息';
-    results[3] = stage3Match ? stage3Match[1].trim() : '未能提取到物理描写';
-    results[4] = ''; // 专项深化（用户选择）
-    results[5] = stage4Match ? stage4Match[1].trim() : '未能提取到互动设计';
-
-    // 世界整合（不包含剧情轨迹）
-    const worldInfo = stage5Match ? stage5Match[1].trim() : '未能提取到世界设定';
-    results[6] = worldInfo;
-
-    // results[7] 用于质量检查，暂时留空
-    results[7] = '';
-
-    // results[8] 用于最终输出，暂时留空
-    results[8] = '';
-
-    // ⭐ 剧情轨迹单独存储到 results[9]，后续会写入 creator_notes
-    // 这是一个特殊的槽位，用于存储剧情线模式的额外数据
-    if (plotTrajectoryMatch) {
-      const plotTrajectory = plotTrajectoryMatch[1].trim();
-      // 格式化为创作者备注格式
-      results[9] = `📖 **剧情轨迹指南**（写入角色卡的 creator_notes 字段）
-
-⚠️ **重要提示**：以下内容是"潜在的发展方向"，不是已发生的历史。
-AI 扮演时应参考这些锚点，但角色目前处于初始状态。
-
----
-
-${plotTrajectory}
-
----
-
-💡 **使用说明**：
-- 此内容已自动写入角色卡的「创作者备注」(creator_notes) 字段
-- SillyTavern 会将此内容注入到 AI 的上下文中
-- AI 会参考这些指引来控制剧情和态度的发展节奏`;
-    } else {
-      results[9] = '';
-    }
-
-    return results;
-  };
-
   // 处理键盘事件
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      sendMessage();
+      void sendMessage();
     }
   };
 
@@ -1104,7 +1721,37 @@ ${plotTrajectory}
     setMessages([]);
     setDiscussionPhase('reading');
     setError('');
+    setPreparedSource(null);
+    setAnalysisProgress({ label: '', current: 0, total: 0 });
   };
+
+  const estimatedChunkCount = text.trim() ? splitSourceText(text).length : 0;
+  const willUseLongTextPipeline = text.length >= LONG_TEXT_THRESHOLD || estimatedChunkCount > 1;
+  const progressPercent = analysisProgress.total > 0
+    ? Math.min(100, Math.round((analysisProgress.current / analysisProgress.total) * 100))
+    : 0;
+
+  const renderAnalysisProgress = () => analysisProgress.label ? (
+    <div className="w-full max-w-md mt-5">
+      <div className="flex items-center justify-between text-xs text-slate-600 dark:text-slate-400 mb-2">
+        <span className="truncate pr-3">{analysisProgress.label}</span>
+        <span className="tabular-nums flex-shrink-0">
+          {analysisProgress.current}/{analysisProgress.total}
+        </span>
+      </div>
+      <div className="h-2 bg-slate-200 dark:bg-slate-700 overflow-hidden">
+        <div
+          className="h-full bg-indigo-600 transition-[width] duration-300"
+          style={{ width: `${progressPercent}%` }}
+        />
+      </div>
+      {retryNotice && (
+        <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+          {retryNotice}
+        </p>
+      )}
+    </div>
+  ) : null;
 
 
   // ========== 渲染：模式选择界面 ==========
@@ -1130,7 +1777,7 @@ ${plotTrajectory}
         <div className="flex items-center space-x-2">
           <input
             type="file"
-            accept=".txt,.md,.doc,.docx"
+            accept=".txt,.md"
             onChange={handleFileUpload}
             className="hidden"
             id="file-upload"
@@ -1142,7 +1789,7 @@ ${plotTrajectory}
             <FileText className="w-4 h-4" />
             <span>选择文件</span>
           </label>
-          <span className="text-xs text-slate-500">支持 .txt, .md, .doc, .docx</span>
+          <span className="text-xs text-slate-500">支持 .txt、.md</span>
         </div>
       </div>
 
@@ -1158,9 +1805,48 @@ ${plotTrajectory}
           rows={8}
           className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-transparent resize-none font-mono text-sm"
         />
-        <div className="mt-2 text-xs text-slate-500 dark:text-slate-400">
-          已输入 {text.length} 字符
+        <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500 dark:text-slate-400">
+          <span>已输入 {text.length} 字符</span>
+          {willUseLongTextPipeline && (
+            <span className="text-indigo-600 dark:text-indigo-400">
+              将按约 {estimatedChunkCount} 个章节/片段建立索引
+            </span>
+          )}
         </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+          原文库准备方式
+        </label>
+        <div className="grid grid-cols-3 border border-slate-300 dark:border-slate-600 rounded overflow-hidden">
+          {([
+            ['quick', '快速'],
+            ['balanced', '均衡'],
+            ['complete', '完整'],
+          ] as Array<[SourcePreparationMode, string]>).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setSourcePreparationMode(value)}
+              aria-pressed={sourcePreparationMode === value}
+              className={`min-h-10 px-2 py-2 text-sm border-r last:border-r-0 border-slate-300 dark:border-slate-600 ${
+                sourcePreparationMode === value
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+          {sourcePreparationMode === 'quick'
+            ? '先审计入口附近 2 个单元，其余工作写入可恢复队列。'
+            : sourcePreparationMode === 'balanced'
+              ? '先审计前 6 个单元并后台建立向量，其余单元渐进处理。'
+              : '当前会话扫描全部原文单元，并等待已启用的向量索引完成。'}
+        </p>
       </div>
 
       {/* 模式选择 */}
@@ -1182,7 +1868,7 @@ ${plotTrajectory}
                 <span className="ml-2 px-2 py-0.5 text-xs bg-indigo-600 text-white rounded">推荐</span>
               </div>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                AI 先阅读文本，然后与你讨论角色设定、确认细节，最后再分发到各阶段
+                AI 先建立可追溯的原作索引，再与你确认目标角色和设定，最后逐项分发
               </p>
             </div>
             <ArrowRight className="w-5 h-5 text-indigo-600 dark:text-indigo-400 ml-2 mt-0.5" />
@@ -1197,7 +1883,7 @@ ${plotTrajectory}
             <div className="flex-1">
               <div className="font-semibold text-slate-900 dark:text-white">快速模式</div>
               <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                AI 直接分析文本并自动填充到各阶段，适合设定已经很完整的情况
+                自动建立索引并逐项填充各阶段，适合无需讨论的完整设定或小说
               </p>
             </div>
             <ArrowRight className="w-5 h-5 text-slate-400 ml-2 mt-0.5" />
@@ -1301,13 +1987,13 @@ ${plotTrajectory}
           {discussionPhase === 'chatting' && (
             <>
               与 AI 讨论中
-              <span className="ml-2">· 确认后输入"确认"或"开始分发"</span>
+              <span className="ml-2">· 确认后输入“确认”或“开始分发”</span>
             </>
           )}
           {discussionPhase === 'storyline-discuss' && (
             <>
               <span className="px-1.5 py-0.5 text-xs bg-indigo-600 text-white rounded">第一阶段</span>
-              <span className="ml-2">剧情讨论 · 输入"确认剧情"进入下一阶段</span>
+              <span className="ml-2">剧情讨论 · 输入“确认剧情”进入下一阶段</span>
             </>
           )}
           {discussionPhase === 'storyline-confirm' && (
@@ -1320,11 +2006,18 @@ ${plotTrajectory}
           {discussionPhase === 'distribute-discuss' && (
             <>
               <span className="px-1.5 py-0.5 text-xs bg-orange-600 text-white rounded">第二阶段</span>
-              <span className="ml-2">分发讨论 · 输入"确认分发"完成导入</span>
+              <span className="ml-2">分发讨论 · 输入“确认分发”完成导入</span>
             </>
           )}
           {discussionPhase === 'finalizing' && '正在生成结构化分析...'}
         </div>
+        {discussionPhase === 'finalizing' && renderAnalysisProgress()}
+        {loading && discussionPhase !== 'reading' && discussionPhase !== 'finalizing' && renderAnalysisProgress()}
+        {retryNotice && discussionPhase !== 'finalizing' && (
+          <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">
+            {retryNotice}
+          </p>
+        )}
       </div>
 
       {/* 模式选择阶段 */}
@@ -1337,7 +2030,10 @@ ${plotTrajectory}
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
               <Loader className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-3" />
-              <p className="text-slate-600 dark:text-slate-400">AI 正在阅读你的文本...</p>
+              <p className="text-slate-600 dark:text-slate-400">
+                {analysisProgress.label || 'AI 正在阅读你的文本...'}
+              </p>
+              {renderAnalysisProgress()}
             </div>
           </div>
         ) : (
@@ -1391,7 +2087,7 @@ ${plotTrajectory}
             disabled={loading}
           />
           <button
-            onClick={sendMessage}
+            onClick={() => void sendMessage()}
             disabled={loading || !userInput.trim()}
             className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-[42px]"
           >
@@ -1410,10 +2106,7 @@ ${plotTrajectory}
             ← 返回重新导入
           </button>
           <button
-            onClick={() => {
-              setUserInput('确认，开始分发到各阶段');
-              setTimeout(() => sendMessage(), 100);
-            }}
+            onClick={() => void sendMessage('确认并分发')}
             disabled={loading}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm flex items-center space-x-2 disabled:opacity-50"
           >
@@ -1433,10 +2126,7 @@ ${plotTrajectory}
             ← 返回重新导入
           </button>
           <button
-            onClick={() => {
-              setUserInput('确认剧情');
-              setTimeout(() => sendMessage(), 100);
-            }}
+            onClick={() => void sendMessage('确认剧情')}
             disabled={loading}
             className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors text-sm flex items-center space-x-2 disabled:opacity-50"
           >
@@ -1476,10 +2166,7 @@ ${plotTrajectory}
             ← 返回剧情讨论
           </button>
           <button
-            onClick={() => {
-              setUserInput('确认分发');
-              setTimeout(() => sendMessage(), 100);
-            }}
+            onClick={() => void sendMessage('确认分发')}
             disabled={loading}
             className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors text-sm flex items-center space-x-2 disabled:opacity-50"
           >
@@ -1522,8 +2209,11 @@ ${plotTrajectory}
       ) : (
         <>
           <Loader className="w-16 h-16 animate-spin text-indigo-600 mb-4" />
-          <p className="text-lg font-semibold text-slate-900 dark:text-white mb-2">AI 正在分析...</p>
-          <p className="text-sm text-slate-600 dark:text-slate-400">这可能需要 30 秒到 1 分钟</p>
+          <p className="text-lg font-semibold text-slate-900 dark:text-white mb-2">AI 正在分步分析...</p>
+          <p className="text-sm text-slate-600 dark:text-slate-400 text-center">
+            {analysisProgress.label || '正在准备原作索引'}
+          </p>
+          {renderAnalysisProgress()}
         </>
       )}
 
@@ -1543,6 +2233,9 @@ ${plotTrajectory}
       )}
     </div>
   );
+
+  // 关闭时保留组件状态，重新打开后可继续此前的讨论或分发预览。
+  if (!isOpen) return null;
 
   // ========== 主渲染 ==========
   return (
@@ -1574,6 +2267,8 @@ ${plotTrajectory}
             onClick={onClose}
             disabled={isAnalyzing || loading}
             className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors disabled:opacity-50"
+            aria-label="暂存并关闭"
+            title="暂存并关闭"
           >
             <X className="w-5 h-5" />
           </button>
@@ -1593,7 +2288,7 @@ ${plotTrajectory}
               onClick={onClose}
               className="px-4 py-2 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-lg transition-colors"
             >
-              取消
+              暂存并关闭
             </button>
           </div>
         )}
